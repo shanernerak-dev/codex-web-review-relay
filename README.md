@@ -1,4 +1,4 @@
-# single-crystal-review-relay
+# codex-web-review-relay
 
 Issue #40 的本地 MCP review relay companion repository。Stage B 只提供 host/contract core：localhost-only Streamable HTTP MCP、Bearer/Origin 检查、SQLite job state、fingerprint/idempotency、Native Messaging framing/bridge 与 restart reconciliation。真实 browser dispatch、`request_review` 和 formal verdict 均不在本阶段实现。
 
