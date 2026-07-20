@@ -14,7 +14,7 @@ function requireText(message: NativeRecord, key: string): string {
   return message[key] as string;
 }
 
-function validateVersion(message: NativeRecord): void {
+function validateVersion(message: NativeRecord): {major: number; minor: number} {
   const version = message.schemaVersion as NativeRecord | undefined;
   if (!version || version.major !== NATIVE_SCHEMA_VERSION.major) {
     throw new Error("NATIVE_SCHEMA_MAJOR_UNSUPPORTED");
@@ -22,6 +22,10 @@ function validateVersion(message: NativeRecord): void {
   if (!Number.isInteger(version.minor) || (version.minor as number) < 0) {
     throw new Error("NATIVE_SCHEMA_MINOR_INVALID");
   }
+  if (version.minor !== NATIVE_SCHEMA_VERSION.minor) {
+    throw new Error("NATIVE_SCHEMA_MINOR_UNSUPPORTED");
+  }
+  return {major: version.major as number, minor: version.minor as number};
 }
 
 export class NativeBridge {
@@ -38,7 +42,7 @@ export class NativeBridge {
       throw new Error("NATIVE_MESSAGE_INVALID:object");
     }
     const message = value as NativeRecord;
-    validateVersion(message);
+    const peerVersion = validateVersion(message);
     const type = requireText(message, "type");
     const requestId = typeof message.requestId === "string" ? message.requestId : null;
     if (type === "ARM_SESSION") {
@@ -47,8 +51,8 @@ export class NativeBridge {
         sessionId: requireText(message, "sessionId"),
         conversationIdentity: requireText(message, "conversationIdentity"),
         extensionVersion: requireText(message, "extensionVersion"),
-        schemaMajor: NATIVE_SCHEMA_VERSION.major,
-        schemaMinor: NATIVE_SCHEMA_VERSION.minor,
+        schemaMajor: peerVersion.major,
+        schemaMinor: peerVersion.minor,
         leaseMs: this.leaseMs,
       });
       return this.ack(requestId, "SESSION_ARMED", session);
@@ -65,8 +69,9 @@ export class NativeBridge {
     }
 
     const sessionId = requireText(message, "sessionId");
-    this.requireSession(sessionId);
+    const session = this.requireSession(sessionId);
     const jobId = requireText(message, "jobId");
+    this.coordinator.store.requireJobSession(jobId, session);
     const phaseByType = {
       USER_TURN_ACKED: "USER_TURN_ACKED",
       ASSISTANT_STARTED: "ASSISTANT_STARTED",
@@ -93,11 +98,12 @@ export class NativeBridge {
     envelope: TriggerEnvelope;
     deadline: string;
   }): NativeRecord {
-    this.requireSession(input.sessionId);
+    const session = this.requireSession(input.sessionId);
     const job = this.coordinator.store.getJob(input.jobId);
     if (job.phase !== "CREATED" || job.fingerprint !== input.fingerprint) {
       throw new Error("DISPATCH_PRECONDITION_FAILED");
     }
+    this.coordinator.store.bindJobToSession(input.jobId, session);
     return {
       schemaVersion: NATIVE_SCHEMA_VERSION,
       type: "DISPATCH_TRIGGER",

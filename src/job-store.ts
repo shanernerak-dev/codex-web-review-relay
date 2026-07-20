@@ -29,6 +29,8 @@ export interface StoredJob {
   handoff_path: string;
   handoff_sha256: string;
   reviewed_head: string;
+  session_id: string | null;
+  conversation_identity: string | null;
   phase: JobPhase;
   recovery_from: JobPhase | null;
   result: "completed" | "blocked" | "timeout" | "mismatch" | null;
@@ -71,6 +73,8 @@ export class JobStore {
         handoff_path TEXT NOT NULL,
         handoff_sha256 TEXT NOT NULL,
         reviewed_head TEXT NOT NULL,
+        session_id TEXT,
+        conversation_identity TEXT,
         phase TEXT NOT NULL,
         recovery_from TEXT,
         result TEXT,
@@ -94,6 +98,14 @@ export class JobStore {
         lease_expires_at TEXT NOT NULL
       );
     `);
+    for (const statement of [
+      "ALTER TABLE jobs ADD COLUMN session_id TEXT",
+      "ALTER TABLE jobs ADD COLUMN conversation_identity TEXT",
+    ]) {
+      try { this.db.exec(statement); } catch (error) {
+        if (!(error instanceof Error) || !error.message.includes("duplicate column name")) throw error;
+      }
+    }
   }
 
   createOrGetJob(relay: RelayExport, fingerprint: string, deadline: Date): {job: StoredJob; created: boolean} {
@@ -170,6 +182,27 @@ export class JobStore {
     return this.getJob(jobId);
   }
 
+  bindJobToSession(jobId: string, session: StoredSession): StoredJob {
+    const current = this.getJob(jobId);
+    if (current.phase !== "CREATED") throw new Error("JOB_BINDING_PHASE_INVALID");
+    if (current.session_id && (current.session_id !== session.session_id || current.conversation_identity !== session.conversation_identity)) {
+      throw new Error("JOB_SESSION_MISMATCH");
+    }
+    this.db.prepare(`
+      UPDATE jobs SET session_id = ?, conversation_identity = ?, updated_at = ?
+      WHERE job_id = ?
+    `).run(session.session_id, session.conversation_identity, new Date().toISOString(), jobId);
+    return this.getJob(jobId);
+  }
+
+  requireJobSession(jobId: string, session: StoredSession): StoredJob {
+    const job = this.getJob(jobId);
+    if (!job.session_id || job.session_id !== session.session_id || job.conversation_identity !== session.conversation_identity) {
+      throw new Error("JOB_SESSION_MISMATCH");
+    }
+    return job;
+  }
+
   armSession(input: {
     sessionId: string;
     conversationIdentity: string;
@@ -183,6 +216,16 @@ export class JobStore {
     const current = this.getActiveSession(now);
     if (current && (current.session_id !== input.sessionId || current.conversation_identity !== input.conversationIdentity)) {
       throw new Error("SESSION_ALREADY_ARMED");
+    }
+    const activeJob = this.getActiveJob();
+    if (activeJob?.session_id && (
+      activeJob.session_id !== input.sessionId ||
+      activeJob.conversation_identity !== input.conversationIdentity
+    )) {
+      if (["DISPATCHED", "USER_TURN_ACKED", "ASSISTANT_STARTED"].includes(activeJob.phase)) {
+        this.transitionJob(activeJob.job_id, "SESSION_LOST", "SESSION_REPLACEMENT_REJECTED");
+      }
+      throw new Error("ACTIVE_JOB_SESSION_MISMATCH");
     }
     const nowText = now.toISOString();
     const leaseExpires = new Date(now.getTime() + input.leaseMs).toISOString();

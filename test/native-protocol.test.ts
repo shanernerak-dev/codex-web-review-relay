@@ -75,3 +75,51 @@ test("native bridge rejects unknown schema major", () => {
   store.close();
   rmSync(root, {recursive: true, force: true});
 });
+
+test("native bridge rejects unsupported minor and records peer version", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-minor-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const bridge = new NativeBridge(new JobCoordinator(store));
+  assert.throws(
+    () => bridge.handleInbound({schemaVersion: {major: 1, minor: 1}, type: "ARM_SESSION"}),
+    /NATIVE_SCHEMA_MINOR_UNSUPPORTED/,
+  );
+  bridge.handleInbound({
+    schemaVersion: {major: 1, minor: 0}, type: "ARM_SESSION", requestId: "arm-1",
+    sessionId: "session-1", conversationIdentity: "conversation-1", extensionVersion: "0.1.0",
+  });
+  assert.equal(store.getActiveSession()?.schema_major, 1);
+  assert.equal(store.getActiveSession()?.schema_minor, 0);
+  store.close();
+  rmSync(root, {recursive: true, force: true});
+});
+
+test("lifecycle event must match persisted job session and conversation binding", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-binding-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const bridge = new NativeBridge(new JobCoordinator(store), 60_000);
+  const relay = relayFixture();
+  const fingerprint = relayFingerprint(relay);
+  const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+  bridge.handleInbound({
+    schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm-a",
+    sessionId: "session-a", conversationIdentity: "conversation-a", extensionVersion: "0.1.0",
+  });
+  bridge.createDispatch({
+    sessionId: "session-a", jobId: job.job_id, fingerprint,
+    envelope: renderTriggerEnvelope(relay), deadline: job.deadline,
+  });
+  bridge.markDispatchWritten(job.job_id);
+  store.disarmSession("session-a");
+  assert.throws(() => bridge.handleInbound({
+    schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm-b",
+    sessionId: "session-b", conversationIdentity: "conversation-b", extensionVersion: "0.1.0",
+  }), /ACTIVE_JOB_SESSION_MISMATCH/);
+  assert.throws(() => bridge.handleInbound({
+    schemaVersion: NATIVE_SCHEMA_VERSION, type: "USER_TURN_ACKED", requestId: "event-b",
+    sessionId: "session-b", jobId: job.job_id,
+  }), /SESSION_NOT_ARMED/);
+  assert.equal(store.getJob(job.job_id).phase, "SESSION_LOST");
+  store.close();
+  rmSync(root, {recursive: true, force: true});
+});

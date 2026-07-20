@@ -2,7 +2,7 @@
   "schema_version": {"major": 1, "minor": 0},
   "producer": {
     "repository": "David-JA/single-crystal-stress",
-    "commit": "d320c08200659c0d4d1b5d0a200deac929e19159",
+    "commit": "40506871c5bac10ea53ff0e5f24ef9a6a203097b",
     "fixture_path": "tests/fixtures/review_relay/relay_export_v1_0.json",
     "fixture_sha256": "d2ab15a3af90532894f3b1366c708e1947af46f1d639efe08817cb676a147a3e"
   }

@@ -122,7 +122,7 @@ export function createRelayServer(config: RelayConfig, bearerToken: string, stor
         result: {
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: {tools: {listChanged: false}},
-          serverInfo: {name: "single-crystal-review-relay", version: "0.1.0"},
+          serverInfo: {name: "codex-web-review-relay", version: "0.1.0"},
           instructions: "Stage B host core only; browser dispatch remains disabled until Stage C authorization.",
         },
       });

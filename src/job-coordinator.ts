@@ -16,12 +16,12 @@ export class JobCoordinator extends EventEmitter {
   }
 
   waitFor(jobId: string, accepted: ReadonlySet<JobPhase>, timeoutMs: number): Promise<StoredJob> {
-    const current = this.store.getJob(jobId);
-    if (accepted.has(current.phase)) return Promise.resolve(current);
     return new Promise((resolve, reject) => {
       const event = `job:${jobId}`;
+      let settled = false;
       const onUpdate = (job: StoredJob) => {
-        if (!accepted.has(job.phase)) return;
+        if (settled || !accepted.has(job.phase)) return;
+        settled = true;
         clearTimeout(timer);
         this.off(event, onUpdate);
         resolve(job);
@@ -31,6 +31,13 @@ export class JobCoordinator extends EventEmitter {
         reject(new Error("WAIT_TIMEOUT"));
       }, timeoutMs);
       this.on(event, onUpdate);
+      try {
+        onUpdate(this.store.getJob(jobId));
+      } catch (error) {
+        clearTimeout(timer);
+        this.off(event, onUpdate);
+        reject(error);
+      }
     });
   }
 }

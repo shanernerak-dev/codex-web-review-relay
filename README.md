@@ -2,6 +2,10 @@
 
 Issue #40 的本地 MCP review relay companion repository。Stage B 只提供 host/contract core：localhost-only Streamable HTTP MCP、Bearer/Origin 检查、SQLite job state、fingerprint/idempotency、Native Messaging framing/bridge 与 restart reconciliation。真实 browser dispatch、`request_review` 和 formal verdict 均不在本阶段实现。
 
+Canonical GitHub repository 为 `shanernerak-dev/codex-web-review-relay`，visibility 为 `PUBLIC`。现有本机 checkout 目录 `C:\coding_projet\single-crystal-review-relay` 是 bootstrap 时形成的 user-local historical path，不属于产品 identity。`private: true` 仅用于阻止意外发布 npm package，不表示 GitHub repository visibility。
+
+Native host 采用单进程 topology：Chrome 启动的 `native-host` 同时持有唯一 `JobStore` / `JobCoordinator` / `NativeBridge` 并启动 localhost MCP server，进程内 event-driven wait 不跨进程共享。
+
 ## 验证
 
 ```powershell

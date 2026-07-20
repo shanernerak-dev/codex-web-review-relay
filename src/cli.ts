@@ -12,25 +12,15 @@ function configArgument(): string {
   return process.argv[index + 1];
 }
 
-async function serve(): Promise<void> {
+async function nativeHost(): Promise<void> {
   const config = loadConfig(configArgument());
   const token = readFileSync(config.bearerTokenPath, "utf8").trim();
   const store = new JobStore(config.stateDbPath);
+  const coordinator = new JobCoordinator(store);
+  const bridge = new NativeBridge(coordinator);
   const server = createRelayServer(config, token, store);
   const address = await listen(server, config);
   process.stderr.write(`review relay listening on ${address.host}:${address.port}\n`);
-  const shutdown = () => server.close(() => {
-    store.close();
-    process.exit(0);
-  });
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
-}
-
-async function nativeHost(): Promise<void> {
-  const config = loadConfig(configArgument());
-  const store = new JobStore(config.stateDbPath);
-  const bridge = new NativeBridge(new JobCoordinator(store));
   const decoder = new NativeMessageDecoder();
   process.stdin.on("data", (chunk: Buffer) => {
     try {
@@ -47,14 +37,18 @@ async function nativeHost(): Promise<void> {
       }));
     }
   });
-  process.stdin.once("end", () => store.close());
+  const shutdown = () => server.close(() => {
+    store.close();
+    process.exit(0);
+  });
+  process.stdin.once("end", shutdown);
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
 }
 
 const command = process.argv[2];
-if (command === "serve") {
-  await serve();
-} else if (command === "native-host") {
+if (command === "native-host") {
   await nativeHost();
 } else {
-  throw new Error("usage: cli.ts <serve|native-host> --config <path>");
+  throw new Error("usage: cli.ts native-host --config <path>");
 }
