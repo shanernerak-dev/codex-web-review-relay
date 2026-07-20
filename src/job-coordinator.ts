@@ -7,12 +7,11 @@ export class JobCoordinator extends EventEmitter {
   constructor(store: JobStore) {
     super();
     this.store = store;
+    this.store.on("job-transition", (job: StoredJob) => this.emit(`job:${job.job_id}`, job));
   }
 
   transition(jobId: string, phase: JobPhase, errorCode: string | null = null): StoredJob {
-    const job = this.store.transitionJob(jobId, phase, errorCode);
-    this.emit(`job:${jobId}`, job);
-    return job;
+    return this.store.transitionJob(jobId, phase, errorCode);
   }
 
   waitFor(jobId: string, accepted: ReadonlySet<JobPhase>, timeoutMs: number): Promise<StoredJob> {

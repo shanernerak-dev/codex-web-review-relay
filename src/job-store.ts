@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { DatabaseSync } from "node:sqlite";
 import type { RelayExport } from "./relay-contract.ts";
 
@@ -59,10 +60,11 @@ function resultForPhase(phase: JobPhase): StoredJob["result"] {
   return null;
 }
 
-export class JobStore {
+export class JobStore extends EventEmitter {
   readonly db: DatabaseSync;
 
   constructor(path: string) {
+    super();
     this.db = new DatabaseSync(path);
     this.db.exec(`
       PRAGMA journal_mode = WAL;
@@ -179,7 +181,9 @@ export class JobStore {
       SET phase = ?, recovery_from = ?, result = ?, error_code = ?, updated_at = ?
       WHERE job_id = ?
     `).run(next, recoveryFrom, resultForPhase(next), errorCode, now, jobId);
-    return this.getJob(jobId);
+    const job = this.getJob(jobId);
+    this.emit("job-transition", job);
+    return job;
   }
 
   bindJobToSession(jobId: string, session: StoredSession): StoredJob {

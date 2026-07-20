@@ -93,7 +93,8 @@ test("waitFor closes the subscribe/read lost-wakeup window", () => withDatabase(
   assert.equal((await coordinator.waitFor(job.job_id, new Set(["DISPATCHED"]), 100)).phase, "DISPATCHED");
 }));
 
-test("expired session cannot rebind an unresolved job to another conversation", () => withDatabase((store) => {
+test("expired session cannot rebind an unresolved job and wakes SESSION_LOST waiter", () => withDatabase(async (store) => {
+  const coordinator = new JobCoordinator(store);
   const relay = relayFixture();
   const job = store.createOrGetJob(relay, relayFingerprint(relay), new Date(Date.now() + 60_000)).job;
   const start = new Date("2026-07-20T00:00:00.000Z");
@@ -102,11 +103,13 @@ test("expired session cannot rebind an unresolved job to another conversation", 
     schemaMajor: 1, schemaMinor: 0, leaseMs: 1_000, now: start,
   });
   store.bindJobToSession(job.job_id, sessionA);
-  store.transitionJob(job.job_id, "DISPATCHED");
+  coordinator.transition(job.job_id, "DISPATCHED");
+  const sessionLost = coordinator.waitFor(job.job_id, new Set(["SESSION_LOST"]), 100);
   assert.throws(() => store.armSession({
     sessionId: "session-b", conversationIdentity: "conversation-b", extensionVersion: "0.1.0",
     schemaMajor: 1, schemaMinor: 0, leaseMs: 1_000, now: new Date(start.getTime() + 1_001),
   }), /ACTIVE_JOB_SESSION_MISMATCH/);
+  assert.equal((await sessionLost).phase, "SESSION_LOST");
   const recovered = store.getJob(job.job_id);
   assert.equal(recovered.phase, "SESSION_LOST");
   assert.equal(recovered.session_id, "session-a");
