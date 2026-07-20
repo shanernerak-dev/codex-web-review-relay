@@ -1,0 +1,14 @@
+{
+  "listenHost": "127.0.0.1",
+  "listenPort": 43127,
+  "allowedOrigins": [
+    "http://127.0.0.1:43127"
+  ],
+  "bearerTokenPath": "<USER_LOCAL_ABSOLUTE_PATH>",
+  "stateDbPath": "<USER_LOCAL_ABSOLUTE_PATH>",
+  "repositoryRoot": "<CURRENT_REPOSITORY_ABSOLUTE_PATH>",
+  "pythonExecutable": "python",
+  "helperPath": "scripts/tools/check_stage_gate_readiness.py",
+  "nativeHostName": "dev.shanernerak.single_crystal_review_relay",
+  "extensionId": "<UNPACKED_EXTENSION_ID>"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "dev.shanernerak.single_crystal_review_relay",
+  "description": "Single-crystal review relay native messaging host",
+  "path": "<ABSOLUTE_PATH_TO_NATIVE_HOST_LAUNCHER>",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://<UNPACKED_EXTENSION_ID>/"
+  ]
+}
