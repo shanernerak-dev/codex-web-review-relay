@@ -1,60 +1,63 @@
-# Review Request
+# 评审请求
 
 Package kind: `review-request`
 Review stream: `main`
 Effective round: `1`
 Target PR: `#1`
-Review scope: README documentation quality for public repository launch
+Review scope: 公开仓库 README 文档质量评审
 
-## Context
+## 背景
 
-This repository (`shanernerak-dev/codex-web-review-relay`) has just transitioned from an internal project to a **public GitHub repository**. The README has been rewritten from internal Stage-oriented descriptions to user-facing public documentation, with an English primary (`README.md`) and a complete Chinese translation (`README.zh-CN.md`).
+本仓库（`shanernerak-dev/codex-web-review-relay`）刚从内部项目转为**公开 GitHub 仓库**。README 已从内部 Stage 导向描述重写为面向外部用户的通用文档，包含英文主体（`README.md`）和完整中文翻译（`README.zh-CN.md`）。
 
-PR #1 (feat: implement Stage B relay host core) has been merged. The README rewrite was done in subsequent commits on `main` (a914868, 92800a2, 14c0978).
+PR #1（feat: implement Stage B relay host core）已 merge。README 重写在后续 main 分支 commit 中完成。
 
-## What to review
+本轮 commit 已将 GitHub PR comment 从"必须"改为"可选"，并更新了双向信息传递描述。
 
-Please review `README.md` and `README.zh-CN.md` as the public-facing documentation of this repository. Focus on:
+## 评审范围
 
-### 1. Accuracy
-Verify that technical descriptions (port numbers, file paths, CLI commands, schema fields, job phases, config keys) match the actual source code:
-- `src/server.ts` — MCP server implementation
-- `src/review-transport.ts` — job lifecycle and fail-closed semantics
-- `src/relay-contract.ts` — relay export schema validation
-- `src/envelope.ts` — trigger envelope generation (6 dynamic fields + 1 fixed instruction)
-- `contracts/mcp-tools.schema.json` — MCP tool definitions
-- `config/relay.config.example.json` — configuration example
-- `extension/manifest.json` — extension manifest and permissions
-- `scripts/install-native-host.ps1` — installer script
+请评审 `README.md` 和 `README.zh-CN.md` 作为本仓库公开首页文档的质量。重点关注：
 
-### 2. Completeness
-Can an external user go from zero to a working review relay using only the README? Check for missing prerequisites, unexplained steps, or undocumented configuration requirements.
+### 1. 准确性
+验证技术描述（端口号、文件路径、CLI 命令、schema 字段、job phase、配置键）是否与源码一致：
+- `src/server.ts` — MCP server 实现
+- `src/review-transport.ts` — job 生命周期和 fail-closed 语义
+- `src/relay-contract.ts` — relay export schema 验证
+- `src/envelope.ts` — trigger envelope 生成（6 个动态字段 + 1 条固定指令）
+- `contracts/mcp-tools.schema.json` — MCP 工具定义
+- `config/relay.config.example.json` — 配置示例
+- `extension/manifest.json` — 扩展 manifest 和权限
+- `scripts/install-native-host.ps1` — 安装器脚本
 
-### 3. Comprehensibility
-For developers unfamiliar with MCP, Chrome Native Messaging, or Chrome extensions: are concepts explained sufficiently? Is the architecture diagram clear?
+### 2. 完整性
+外部用户从零开始能否仅凭 README 完成安装、配置、首次调用？是否有遗漏的关键步骤或前置条件？
 
-### 4. Chinese-English consistency
-`README.zh-CN.md` should be a section-by-section semantic equivalent of `README.md` — no omissions, no additions, no translation ambiguity.
+### 3. 可理解性
+对不熟悉 MCP / Native Messaging / Chrome extension 的开发者，概念解释是否充分？架构图是否清晰？
 
-### 5. Platform dependency description
-Is the distinction between public repos (no special setup) and private repos (requires GitHub App connector) clear and accurate?
+### 4. 中英一致性
+`README.zh-CN.md` 是否与 `README.md` 语义一一对应，无遗漏、无多余、无翻译歧义？
 
-### 6. Security claims
-Does the Security Model section accurately reflect the implementation (localhost-only binding, Bearer token auth, fail-closed validation, no credential storage)?
+### 5. 平台依赖描述
+"两层依赖"模型（relay 传输层 vs 可选的 PR comment 层）是否清晰准确？三种场景表格是否完整？
 
-### 7. Over-promising / under-promising
-Are there claims that exceed current MVP capabilities, or important limitations that are missing?
+### 6. 安全声明
+Security Model 章节是否准确反映实际实现（localhost-only、Bearer token、fail-closed）？
 
-## Output format
+### 7. 过度承诺 / 欠承诺
+是否有描述超出当前 MVP 能力的地方，或遗漏了重要限制？
 
-Please provide your verdict as:
+## 输出格式
+
+请按以下格式提供评审结论：
+
 - Verdict: `PASS` / `REQUEST CHANGES` / `HUMAN DECISION REQUIRED`
-- Itemized findings (if any), each with: location, issue description, suggested fix
-- If no blocking findings, verdict is PASS
+- 逐项 findings（如有），每项包含：位置、问题描述、建议修复
+- 如无 blocking finding，verdict 为 PASS
 
-## Notes
+## 注意事项
 
-- This review covers **README documentation quality only**, not source code implementation correctness (implementation passed 22/22 targeted tests + compat check).
-- Stage Gate governance is the producer repository's internal convention — not required for this companion repo.
-- The formal verdict does not need to be published as a GitHub PR comment. Returning the review result through the relay MCP channel is sufficient for this round.
-- Review language: Chinese or English both acceptable; preserve original text when citing code/paths.
+- 本轮评审**只审 README 文档质量**，不审源码实现正确性（实现已通过 22/22 targeted tests + compat check）。
+- 不要求 Stage Gate 治理流程——那是 producer 仓库的内部规范，companion 仓库作为公开项目不强制。
+- 评审结论无需发布为 GitHub PR comment，通过 relay MCP 通道回传即可。
+- 评审语言：中文或英文均可；引用代码/路径时保留原文。
