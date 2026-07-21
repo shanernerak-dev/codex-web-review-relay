@@ -4,7 +4,11 @@
   const SEND_SELECTOR = "[data-testid='send-button']";
   const STOP_SELECTOR = "[data-testid='stop-button']";
   const TURN_SELECTOR = "[data-message-author-role]";
-  function normalizedText(node) { const value = typeof node.value === "string" ? node.value : (node.innerText ?? node.textContent ?? ""); return String(value).replace(/\r\n/g, "\n").trim(); }
+  function normalizedText(node) {
+    const value = typeof node.value === "string" ? node.value : (node.innerText ?? node.textContent ?? "");
+    return String(value).replace(/\u00a0/g, " ").replace(/\r\n?/g, "\n")
+      .split("\n").map((line) => line.trim()).filter((line) => line.length > 0).join("\n");
+  }
   function unique(document, selectors, code) {
     const nodes = [];
     for (const selector of selectors) for (const node of document.querySelectorAll(selector)) if (!nodes.includes(node)) nodes.push(node);

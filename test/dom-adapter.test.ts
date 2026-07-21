@@ -42,6 +42,11 @@ test("manifest public key freezes the expected unpacked extension ID", () => {
   assert.equal(observed, "kkdijpckhlminpolkllmmkldlljakfem");
 });
 
+test("DOM adapter canonicalizes Lexical block whitespace without changing field text", () => {
+  const lexical = node({innerText: " Path: x\n\nfull Ref:\u00a0refs/heads/topic \r\n\nReviewed head: abc "});
+  assert.equal(adapter.normalizedText(lexical), "Path: x\nfull Ref: refs/heads/topic\nReviewed head: abc");
+});
+
 test("DOM adapter requires exact page, composer and send identities", async () => {
   assert.equal(adapter.pageSupported({origin: "https://chatgpt.com", pathname: "/c/abc-123"}), true);
   assert.equal(adapter.pageSupported({origin: "https://chatgpt.com", pathname: "/g/project/c/abc-123"}), true);
