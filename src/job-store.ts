@@ -141,6 +141,14 @@ export class JobStore extends EventEmitter {
       if (active) {
         throw new Error(`ACTIVE_JOB_EXISTS:${active.job_id}`);
       }
+      const mismatches = this.db.prepare(`
+        SELECT job_id FROM jobs
+        WHERE handoff_path = ? AND handoff_sha256 = ? AND phase = 'MISMATCH'
+        LIMIT 2
+      `).all(relay.handoff_path, relay.handoff_sha256) as unknown as Array<{job_id: string}>;
+      if (mismatches.length > 0) {
+        throw new Error(`MISMATCH_EXISTING_JOB:${mismatches[0].job_id}`);
+      }
       const now = new Date().toISOString();
       const jobId = randomUUID();
       this.db.prepare(`

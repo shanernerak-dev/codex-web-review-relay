@@ -233,6 +233,33 @@ test("manual recovery reuses the stored envelope after reviewed head drift", asy
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 
+test("ordinary request_review fails closed instead of creating a second job after head drift", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const relay = relayFixture();
+  const job = store.createOrGetJob(relay, relayFingerprint(relay), new Date(Date.now() + 60_000)).job;
+  coordinator.transition(job.job_id, "MISMATCH", "TEST_MISMATCH");
+  const writes: Record<string, unknown>[] = [];
+  const service = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => writes.push(message), async () => ({...relay, reviewed_head: "c".repeat(40)}));
+  try {
+    await assert.rejects(service.requestReview(relay.handoff_path), new RegExp(`MISMATCH_EXISTING_JOB:${job.job_id}`));
+    assert.equal(writes.length, 0);
+    assert.equal(store.getJobByHandoff(relay.handoff_path).job_id, job.job_id);
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
+test("manual recovery rejects a pre-migration job without historical relay export", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const relay = relayFixture();
+  const job = store.createOrGetJob(relay, relayFingerprint(relay), new Date(Date.now() + 60_000)).job;
+  store.db.prepare("UPDATE jobs SET relay_json = NULL WHERE job_id = ?").run(job.job_id);
+  coordinator.transition(job.job_id, "MISMATCH", "TEST_MISMATCH");
+  const service = new ReviewTransportService(config(root), store, coordinator, bridge, () => { throw new Error("UNEXPECTED_WRITE"); }, async () => relay);
+  try {
+    await assert.rejects(service.recoverReview(relay.handoff_path, true), /HISTORICAL_RELAY_UNAVAILABLE/);
+    assert.equal(store.getJob(job.job_id).phase, "MISMATCH");
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
 test("soft wait slice returns in-progress and same-fingerprint retry completes without redispatch", async () => {
   const {root, store, coordinator, bridge} = fixture();
   const relay = relayFixture();
