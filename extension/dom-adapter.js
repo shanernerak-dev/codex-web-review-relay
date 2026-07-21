@@ -22,11 +22,24 @@
   }
   function composer(document) { return unique(document, COMPOSER_SELECTORS, "COMPOSER_IDENTITY_MISMATCH"); }
   function sendButton(document) { const button = unique(document, [SEND_SELECTOR], "SEND_BUTTON_IDENTITY_MISMATCH"); if (button.disabled || button.getAttribute?.("aria-disabled") === "true") throw new Error("SEND_BUTTON_DISABLED"); return button; }
-  function writeComposer(document, node, text) {
+  async function writeComposer(document, node, text) {
     node.focus?.();
     if (typeof node.value === "string") { node.value = text; node.dispatchEvent?.(new Event("input", {bubbles: true})); }
-    else { document.execCommand?.("selectAll", false); if (!document.execCommand?.("insertText", false, text)) { node.textContent = text; node.dispatchEvent?.(new InputEvent("input", {bubbles: true, inputType: "insertText", data: text})); } }
-    if (normalizedText(node) !== text.trim()) throw new Error("COMPOSER_READBACK_MISMATCH");
+    else {
+      const selection = document.defaultView?.getSelection?.() ?? globalThis.getSelection?.();
+      const range = document.createRange?.();
+      if (selection && range) {
+        range.selectNodeContents(node); selection.removeAllRanges(); selection.addRange(range);
+      }
+      if (!document.execCommand?.("insertText", false, text)) {
+        node.textContent = text;
+        node.dispatchEvent?.(new InputEvent("input", {bubbles: true, inputType: "insertText", data: text}));
+      }
+    }
+    return await waitFor(document, () => {
+      const current = composer(document);
+      return normalizedText(current) === text.trim() ? current : null;
+    }, "COMPOSER_READBACK_MISMATCH");
   }
   function snapshotTurns(document) { return new Set(Array.from(document.querySelectorAll(TURN_SELECTOR))); }
   function turns(document) { return Array.from(document.querySelectorAll(TURN_SELECTOR)); }
@@ -59,8 +72,7 @@
   }
   async function dispatch(document, envelope) {
     const baseline = snapshotTurns(document);
-    const input = composer(document);
-    writeComposer(document, input, envelope);
+    const input = await writeComposer(document, composer(document), envelope);
     return clickAndConfirm(document, {baseline, input}, envelope);
   }
   function reconcile(document, envelope) {

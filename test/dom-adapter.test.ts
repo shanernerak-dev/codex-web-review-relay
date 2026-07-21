@@ -72,6 +72,53 @@ test("DOM adapter fills the composer before waiting for the send button", async 
   assert.equal(input.value, "");
 });
 
+test("DOM adapter scopes Lexical selection to the composer before insertText", async () => {
+  const calls: string[] = [];
+  const input = node({textContent: "", focus() { calls.push("focus"); }});
+  const button = node({disabled: true, click() { this.clicked = (this.clicked ?? 0) + 1; input.textContent = ""; }});
+  const map = new Map<string, NodeLike[]>([
+    ["#prompt-textarea", []],
+    ["[contenteditable='true'][data-lexical-editor='true']", [input]],
+    ["[data-testid='send-button']", [button]],
+    ["[data-message-author-role]", []],
+  ]);
+  const document = {
+    ...fakeDocument(map),
+    defaultView: {getSelection: () => ({removeAllRanges() { calls.push("clear"); }, addRange() { calls.push("add"); }})},
+    createRange: () => ({selectNodeContents(target: NodeLike) { assert.equal(target, input); calls.push("scope"); }}),
+    execCommand(command: string, _ui: boolean, value?: string) {
+      assert.equal(command, "insertText"); input.textContent = value; button.disabled = false; calls.push("insert"); return true;
+    },
+  };
+  await adapter.dispatch(document, "envelope");
+  assert.deepEqual(calls.slice(0, 5), ["focus", "scope", "clear", "add", "insert"]);
+  assert.equal(button.clicked, 1);
+});
+
+test("DOM adapter reads back the current composer after Lexical replaces the node", async () => {
+  const staleInput = node({textContent: ""});
+  const currentInput = node({textContent: "envelope"});
+  const button = node({disabled: true, click() { this.clicked = (this.clicked ?? 0) + 1; currentInput.textContent = ""; }});
+  const map = new Map<string, NodeLike[]>([
+    ["#prompt-textarea", []],
+    ["[contenteditable='true'][data-lexical-editor='true']", [staleInput]],
+    ["[data-testid='send-button']", [button]],
+    ["[data-message-author-role]", []],
+  ]);
+  const document = {
+    ...fakeDocument(map),
+    execCommand(command: string) {
+      assert.equal(command, "insertText");
+      map.set("[contenteditable='true'][data-lexical-editor='true']", [currentInput]);
+      button.disabled = false;
+      return true;
+    },
+  };
+  await adapter.dispatch(document, "envelope");
+  assert.equal(staleInput.textContent, "");
+  assert.equal(button.clicked, 1);
+});
+
 test("DOM adapter matches only new exact user turn then assistant idle", () => {
   const oldUser = node({role: "user", innerText: "old"});
   const newUser = node({role: "user", innerText: "envelope"});
