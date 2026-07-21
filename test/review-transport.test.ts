@@ -212,6 +212,27 @@ test("manual recovery requires explicit confirmation and respects the deadline",
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 
+test("manual recovery reuses the stored envelope after reviewed head drift", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const relay = relayFixture();
+  const job = store.createOrGetJob(relay, relayFingerprint(relay), new Date(Date.now() + 60_000)).job;
+  coordinator.transition(job.job_id, "MISMATCH", "TEST_MISMATCH");
+  const service = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => {
+    setImmediate(() => {
+      acceptOutbound(bridge, message);
+      lifecycle(bridge, "USER_TURN_ACKED", message.jobId as string);
+      lifecycle(bridge, "ASSISTANT_STARTED", message.jobId as string);
+      lifecycle(bridge, "TURN_IDLE", message.jobId as string, "historical recovery");
+    });
+  }, async () => ({...relay, reviewed_head: "b".repeat(40)}));
+  try {
+    const recovered = await service.recoverReview(relay.handoff_path, true);
+    assert.equal(recovered.job_id, job.job_id);
+    assert.equal(recovered.phase, "TURN_IDLE");
+    assert.equal(recovered.assistant_output, "historical recovery");
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
 test("soft wait slice returns in-progress and same-fingerprint retry completes without redispatch", async () => {
   const {root, store, coordinator, bridge} = fixture();
   const relay = relayFixture();

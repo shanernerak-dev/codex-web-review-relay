@@ -29,6 +29,7 @@ export interface StoredJob {
   fingerprint: string;
   handoff_path: string;
   handoff_sha256: string;
+  relay_json: string;
   reviewed_head: string;
   session_id: string | null;
   conversation_identity: string | null;
@@ -78,6 +79,7 @@ export class JobStore extends EventEmitter {
         fingerprint TEXT NOT NULL UNIQUE,
         handoff_path TEXT NOT NULL,
         handoff_sha256 TEXT NOT NULL,
+        relay_json TEXT,
         reviewed_head TEXT NOT NULL,
         session_id TEXT,
         conversation_identity TEXT,
@@ -110,6 +112,7 @@ export class JobStore extends EventEmitter {
     `);
     for (const statement of [
       "ALTER TABLE jobs ADD COLUMN session_id TEXT",
+      "ALTER TABLE jobs ADD COLUMN relay_json TEXT",
       "ALTER TABLE jobs ADD COLUMN conversation_identity TEXT",
       "ALTER TABLE jobs ADD COLUMN recovery_send_used INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE jobs ADD COLUMN manual_recovery_used INTEGER NOT NULL DEFAULT 0",
@@ -143,11 +146,11 @@ export class JobStore extends EventEmitter {
       this.db.prepare(`
         INSERT INTO jobs (
           job_id, fingerprint, handoff_path, handoff_sha256, reviewed_head,
-          phase, recovery_from, result, error_code, deadline, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'CREATED', NULL, NULL, NULL, ?, ?, ?)
+          relay_json, phase, recovery_from, result, error_code, deadline, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'CREATED', NULL, NULL, NULL, ?, ?, ?)
       `).run(
         jobId, fingerprint, relay.handoff_path, relay.handoff_sha256, relay.reviewed_head,
-        deadline.toISOString(), now, now,
+        JSON.stringify(relay), deadline.toISOString(), now, now,
       );
       const job = this.getJob(jobId);
       this.db.exec("COMMIT");
@@ -234,6 +237,15 @@ export class JobStore extends EventEmitter {
 
   getJobByFingerprint(fingerprint: string): StoredJob | null {
     return (this.db.prepare("SELECT * FROM jobs WHERE fingerprint = ?").get(fingerprint) as StoredJob | undefined) ?? null;
+  }
+
+  getRelayExport(jobId: string): RelayExport {
+    const job = this.getJob(jobId);
+    if (typeof job.relay_json !== "string" || job.relay_json.length === 0) {
+      throw new Error("HISTORICAL_RELAY_UNAVAILABLE");
+    }
+    try { return JSON.parse(job.relay_json) as RelayExport; }
+    catch { throw new Error("HISTORICAL_RELAY_INVALID"); }
   }
 
   armSession(input: {

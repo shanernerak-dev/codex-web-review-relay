@@ -2,7 +2,7 @@ import { renderTriggerEnvelope } from "./envelope.ts";
 import { JobCoordinator } from "./job-coordinator.ts";
 import { JobStore, type JobPhase, type StoredJob } from "./job-store.ts";
 import { NativeBridge } from "./native-protocol.ts";
-import { relayFingerprint, type RelayExport } from "./relay-contract.ts";
+import { relayFingerprint, validateRelayExport, type RelayExport } from "./relay-contract.ts";
 import { runRelayExport } from "./repo-adapter.ts";
 import type { RelayConfig } from "./config.ts";
 
@@ -97,15 +97,14 @@ export class ReviewTransportService {
   async recoverReview(handoffPath: string, confirmUnsent: boolean): Promise<TransportStatus> {
     if (confirmUnsent !== true) throw new Error("MANUAL_RECOVERY_CONFIRMATION_REQUIRED");
     const relay = await this.exportRelay(this.config, handoffPath);
-    const fingerprint = relayFingerprint(relay);
-    const persisted = this.store.getJobByFingerprint(fingerprint);
-    if (!persisted) throw new Error("JOB_NOT_FOUND");
-    if (persisted.handoff_sha256 !== relay.handoff_sha256 || persisted.reviewed_head !== relay.reviewed_head) {
-      throw new Error("STORED_JOB_IDENTITY_MISMATCH");
-    }
+    const persisted = this.store.getJobByHandoff(relay.handoff_path);
+    if (persisted.handoff_sha256 !== relay.handoff_sha256) throw new Error("HANDOFF_LOOKUP_DRIFT");
+    const historicalRelay = validateRelayExport(this.store.getRelayExport(persisted.job_id));
+    const fingerprint = persisted.fingerprint;
+    if (relayFingerprint(historicalRelay) !== fingerprint) throw new Error("STORED_JOB_IDENTITY_MISMATCH");
     this.store.authorizeManualRecovery(persisted.job_id);
     this.reconciledJobs.delete(persisted.job_id);
-    return this.requestReviewResolved(relay, fingerprint);
+    return this.requestReviewResolved(historicalRelay, fingerprint);
   }
 
   private async requestReviewResolved(relay: RelayExport, fingerprint: string): Promise<TransportStatus> {
