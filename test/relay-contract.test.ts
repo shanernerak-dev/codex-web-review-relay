@@ -41,6 +41,15 @@ test("accepts attended review rounds beyond the unattended five-round budget", (
     })),
     /RELAY_EXPORT_INVALID:handoff_path/,
   );
+  for (const alias of [
+    ".agent/review_handoffs/pr-41/stage-c-runtime-followup/round-1٢-evidence-amendment.md",
+    ".agent/review_handoffs/pr-41/stage-c-runtime-followup/round-１2-evidence-amendment.md",
+  ]) {
+    assert.throws(
+      () => validateRelayExport(relayFixture({handoff_path: alias})),
+      /RELAY_EXPORT_INVALID:handoff_path/,
+    );
+  }
 });
 
 test("fingerprint and six locator fields plus fixed publication instruction are deterministic", () => {
