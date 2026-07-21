@@ -19,6 +19,22 @@
       }
     },
     {
+      "name": "recover_review",
+      "description": "Authorize one audited recovery reconcile for a terminal MISMATCH job after confirming that the original user turn was not sent.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["handoff_path", "confirm_unsent"],
+        "properties": {
+          "handoff_path": {
+            "type": "string",
+            "pattern": "^\\.agent/review_handoffs/pr-[1-9][0-9]*/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"
+          },
+          "confirm_unsent": {"const": true}
+        }
+      }
+    },
+    {
       "name": "get_review_transport_status",
       "description": "Read a persisted transport job by exactly one stable lookup key.",
       "inputSchema": {

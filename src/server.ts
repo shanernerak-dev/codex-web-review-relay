@@ -164,6 +164,13 @@ export function createRelayServer(
             throw new Error("REQUEST_REVIEW_INPUT_INVALID");
           }
           result = await transport.requestReview((args as {handoff_path: string}).handoff_path);
+        } else if (name === "recover_review") {
+          const value = args as Record<string, unknown>;
+          const keys = Object.keys(value).sort();
+          if (keys.length !== 2 || typeof value.handoff_path !== "string" || value.confirm_unsent !== true) {
+            throw new Error("MANUAL_RECOVERY_INPUT_INVALID");
+          }
+          result = await transport.recoverReview(value.handoff_path, true);
         } else if (name === "get_review_transport_status") {
           result = await transport.getStatus(args as {job_id?: string; handoff_path?: string});
         } else {

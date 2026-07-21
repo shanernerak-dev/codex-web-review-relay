@@ -164,6 +164,54 @@ test("dispatch write failure is persisted and retry performs reconciliation with
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 
+test("operator-authorized recovery retries one terminal mismatch exactly once", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const relay = relayFixture();
+  let dispatchWrites = 0;
+  let reconcileWrites = 0;
+  const service = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => {
+    if (message.type === "DISPATCH_TRIGGER") {
+      dispatchWrites += 1;
+      throw new Error("write failed");
+    }
+    reconcileWrites += 1;
+    setImmediate(() => {
+      acceptOutbound(bridge, message);
+      lifecycle(bridge, "USER_TURN_ACKED", message.jobId as string);
+      lifecycle(bridge, "ASSISTANT_STARTED", message.jobId as string);
+      lifecycle(bridge, "TURN_IDLE", message.jobId as string, "recovered verdict");
+    });
+  }, async () => relay);
+  try {
+    await assert.rejects(service.requestReview(relay.handoff_path), /write failed/);
+    const mismatchService = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => {
+      acceptOutbound(bridge, message);
+      lifecycle(bridge, "RECONCILE_MISMATCH", message.jobId as string);
+    }, async () => relay);
+    assert.equal((await mismatchService.requestReview(relay.handoff_path)).phase, "MISMATCH");
+    const recovered = await service.recoverReview(relay.handoff_path, true);
+    assert.equal(recovered.phase, "TURN_IDLE");
+    assert.equal(recovered.assistant_output, "recovered verdict");
+    assert.equal(dispatchWrites, 1);
+    assert.equal(reconcileWrites, 1);
+    await assert.rejects(service.recoverReview(relay.handoff_path, true), /MANUAL_RECOVERY_ALREADY_USED/);
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
+test("manual recovery requires explicit confirmation and respects the deadline", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const relay = relayFixture();
+  const job = store.createOrGetJob(relay, relayFingerprint(relay), new Date(Date.now() + 60_000)).job;
+  coordinator.transition(job.job_id, "MISMATCH", "TEST_MISMATCH");
+  const service = new ReviewTransportService(config(root), store, coordinator, bridge, () => { throw new Error("UNEXPECTED_WRITE"); }, async () => relay);
+  try {
+    await assert.rejects(service.recoverReview(relay.handoff_path, false), /MANUAL_RECOVERY_CONFIRMATION_REQUIRED/);
+    store.db.prepare("UPDATE jobs SET deadline = ? WHERE job_id = ?").run(new Date(Date.now() - 1_000).toISOString(), job.job_id);
+    await assert.rejects(service.recoverReview(relay.handoff_path, true), /MANUAL_RECOVERY_DEADLINE_EXPIRED/);
+    assert.equal(store.getJob(job.job_id).phase, "MISMATCH");
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
 test("soft wait slice returns in-progress and same-fingerprint retry completes without redispatch", async () => {
   const {root, store, coordinator, bridge} = fixture();
   const relay = relayFixture();
