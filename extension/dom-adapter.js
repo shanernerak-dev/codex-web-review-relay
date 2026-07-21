@@ -48,8 +48,22 @@
   }
   function snapshotTurns(document) { return new Set(Array.from(document.querySelectorAll(TURN_SELECTOR))); }
   function turns(document) { return Array.from(document.querySelectorAll(TURN_SELECTOR)); }
+  function stableTurnKey(node) {
+    const turn = node?.closest?.("[data-turn-id]")
+      ?? node?.closest?.("[data-testid^='conversation-turn-']")
+      ?? node?.closest?.("[data-testid='conversation-turn']")
+      ?? null;
+    return String(turn?.getAttribute?.("data-turn-id") ?? turn?.getAttribute?.("data-testid") ?? "");
+  }
+  function oneAssistantTurn(matches) {
+    if (matches.length <= 1) return matches[0] ?? null;
+    const keys = new Set(matches.map(stableTurnKey));
+    if (keys.size === 1 && !keys.has("")) return matches[matches.length - 1];
+    throw new Error("TURN_IDENTITY_AMBIGUOUS:assistant");
+  }
   function newTurn(document, baseline, role, exactText) {
     const matches = Array.from(document.querySelectorAll(TURN_SELECTOR)).filter((node) => !baseline.has(node) && node.getAttribute("data-message-author-role") === role && (exactText === undefined || normalizedText(node) === exactText.trim()));
+    if (role === "assistant") return oneAssistantTurn(matches);
     if (matches.length > 1) throw new Error(`TURN_IDENTITY_AMBIGUOUS:${role}`);
     return matches[0] ?? null;
   }

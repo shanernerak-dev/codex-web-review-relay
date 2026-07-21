@@ -41,6 +41,12 @@
 
 首次 pilot 同时暴露了 identity 设计错误：project conversation 使用 `/g/<project>/c/<conversation>`，普通 conversation 使用 `/c/<conversation>`；把完整 pathname hash 持久化会让 ChatGPT 路由表示参与 transport identity。Maintainer 决定由 popup `Arm` 当前 tab 作为唯一 conversation 选择权。Host 不再保存或比较 conversation URL/hash，job 也不绑定 session；`chrome.storage.local` 只保存有界 manual-arm tab/session lease 以承受 service-worker restart。发生导航后必须重新 Arm。未闭合 job 只能在 Maintainer 重新 Arm 后由同 fingerprint reconciliation 检查 exact envelope，并继续受 `recovery_send_used` 最多一次约束。
 
+## Post-PASS completion identity finding
+
+真实 deep-thinking review 显示，一个 ChatGPT conversation turn 可以包含多个 `data-message-author-role="assistant"` message bubble。把 baseline 后的每个 assistant role node 都当作独立 turn 会错误触发 `TURN_IDENTITY_AMBIGUOUS`。对 `SyncNos-Webclipper` 的概念级审计确认其 collector 优先使用 enclosing `data-turn-id` 作为 stable turn key，并在同一 turn 内保留多个 message 的顺序；本项目没有复制其 AGPL 实现。
+
+当前 relay据此采用更窄的独立实现：多个新增 assistant node 只有在共享同一个非空 stable turn key 时才属于合法同一 response，并选择 document order 中最后一个 node作为最终 Web Agent output；跨不同 stable turn key 的多个候选继续 fail closed。若 ChatGPT 完成后空 composer不显示 send button，则以无 stop control + 唯一有效 composer判定 idle。两项条件共同避免把 reasoning/final bubble误判为两个 review turn，同时保留跨 turn ambiguity gate。
+
 ## 明确延期或不采纳
 
 可延期：offscreen keepalive、多 MCP session SDK、通用 queue、跨浏览器 abstraction、通用 selector engine。真实 Chrome pilot 若证明 MV3 service worker 仍会在 active Native port 下失活，再单独评估 offscreen document。

@@ -15,6 +15,7 @@ type NodeLike = {
   dispatchEvent(): void;
   click(): void;
   getClientRects?(): ArrayLike<unknown>;
+  closest?(selector: string): NodeLike | null;
 };
 
 function node(input: Partial<NodeLike> = {}): NodeLike {
@@ -140,6 +141,30 @@ test("DOM adapter matches only new exact user turn then assistant idle", () => {
   map.set("[data-testid='stop-button']", [node()]);
   assert.equal(adapter.isGenerating(document), true);
   assert.equal(adapter.isIdle(document), false);
+});
+
+test("DOM adapter keeps the last assistant message when one stable turn has multiple bubbles", () => {
+  const turn = node({
+    getAttribute(name) { return name === "data-turn-id" ? "turn-a" : null; },
+  });
+  const inTurn = (text: string) => node({
+    role: "assistant",
+    innerText: text,
+    closest(selector) { return selector === "[data-turn-id]" ? turn : null; },
+  });
+  const firstBubble = inTurn("reasoning summary");
+  const finalBubble = inTurn("final review output");
+  const map = new Map<string, NodeLike[]>([["[data-message-author-role]", [firstBubble, finalBubble]]]);
+  assert.equal(adapter.newTurn(fakeDocument(map), new Set(), "assistant"), finalBubble);
+});
+
+test("DOM adapter rejects assistant candidates from distinct stable turns", () => {
+  const inTurn = (turnId: string) => {
+    const turn = node({getAttribute(name) { return name === "data-turn-id" ? turnId : null; }});
+    return node({role: "assistant", innerText: turnId, closest(selector) { return selector === "[data-turn-id]" ? turn : null; }});
+  };
+  const map = new Map<string, NodeLike[]>([["[data-message-author-role]", [inTurn("turn-a"), inTurn("turn-b")]]]);
+  assert.throws(() => adapter.newTurn(fakeDocument(map), new Set(), "assistant"), /TURN_IDENTITY_AMBIGUOUS/);
 });
 
 test("DOM adapter recognizes completed turns when the empty composer has no send button", () => {
