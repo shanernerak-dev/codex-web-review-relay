@@ -39,6 +39,8 @@
 
 该修复不改变六字段 trigger envelope、fingerprint、authorization boundary 或 formal verdict readback；`SEND_UNCERTAIN` 仍只能通过 same-fingerprint reconciliation 恢复，不能 blind resend。
 
+Extension reload 会清空 `chrome.storage.session`，因此不能将其作为 durable binding。实现改用 `chrome.storage.local` 保存有界 manual-arm lease；若旧版本 reload 已丢失 session，extension 只能请求显式 `RECOVER_SESSION`，由 host 在 conversation identity 精确匹配且 active job 处于 `SEND_UNCERTAIN` / `SESSION_LOST` 时恢复 job 原绑定 session。不同 conversation 或其他 phase 一律拒绝。
+
 ## 明确延期或不采纳
 
 可延期：offscreen keepalive、多 MCP session SDK、通用 queue、跨浏览器 abstraction、通用 selector engine。真实 Chrome pilot 若证明 MV3 service worker 仍会在 active Native port 下失活，再单独评估 offscreen document。

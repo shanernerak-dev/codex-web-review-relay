@@ -81,6 +81,17 @@ export class NativeBridge {
       });
       return this.ack(requestId, "SESSION_ARMED", session);
     }
+    if (type === "RECOVER_SESSION") {
+      if (!requestId) throw new Error("NATIVE_MESSAGE_INVALID:requestId");
+      const session = this.coordinator.store.recoverSession({
+        conversationIdentity: requireText(message, "conversationIdentity"),
+        extensionVersion: requireText(message, "extensionVersion"),
+        schemaMajor: peerVersion.major,
+        schemaMinor: peerVersion.minor,
+        leaseMs: this.leaseMs,
+      });
+      return this.ack(requestId, "SESSION_RECOVERED", session);
+    }
     if (type === "HEARTBEAT") {
       if (!requestId) throw new Error("NATIVE_MESSAGE_INVALID:requestId");
       const session = this.coordinator.store.heartbeat(requireText(message, "sessionId"), this.leaseMs);

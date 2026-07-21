@@ -125,6 +125,24 @@ test("native bridge persists the extension send failure code", () => {
   store.close(); rmSync(root, {recursive: true, force: true});
 });
 
+test("native bridge recovers only the original session for the same conversation", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-session-recovery-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const bridge = new NativeBridge(new JobCoordinator(store), 60_000);
+  const relay = relayFixture();
+  const fingerprint = relayFingerprint(relay);
+  const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm", sessionId: "session-original", conversationIdentity: "conversation-a", extensionVersion: "0.1.0"});
+  bridge.createDispatch({sessionId: "session-original", jobId: job.job_id, fingerprint, envelope: renderTriggerEnvelope(relay), deadline: job.deadline});
+  bridge.markDispatchWritten(job.job_id);
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "SEND_UNCERTAIN", requestId: "uncertain", sessionId: "session-original", jobId: job.job_id});
+  assert.throws(() => bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "RECOVER_SESSION", requestId: "wrong", conversationIdentity: "conversation-b", extensionVersion: "0.1.0"}), /RECOVERY_BINDING_MISMATCH/);
+  const recovered = bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "RECOVER_SESSION", requestId: "recover", conversationIdentity: "conversation-a", extensionVersion: "0.1.0"});
+  assert.equal(recovered.sessionId, "session-original");
+  assert.equal(store.getActiveSession()?.session_id, "session-original");
+  store.close(); rmSync(root, {recursive: true, force: true});
+});
+
 test("native bridge accepts fail-closed reconciliation mismatch", () => {
   const root = mkdtempSync(join(tmpdir(), "review-relay-native-reconcile-"));
   const store = new JobStore(join(root, "state.sqlite"));

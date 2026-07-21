@@ -17,7 +17,7 @@ async function identityHash(value) { const bytes = await crypto.subtle.digest("S
 function reconnectDelay(attempt) { return Math.min(8_000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 125); }
 function clearHeartbeat() { if (heartbeat !== null) clearInterval(heartbeat); heartbeat = null; }
 function startHeartbeat() { clearHeartbeat(); heartbeat = setInterval(() => nativeRequest("HEARTBEAT", {sessionId: armed?.sessionId}).catch(() => {}), 10_000); }
-function persistArmed() { if (armed) return chrome.storage.session.set({[SESSION_KEY]: {...armed}}); return Promise.resolve(); }
+function persistArmed() { if (armed) return chrome.storage.local.set({[SESSION_KEY]: {...armed}}); return Promise.resolve(); }
 function rejectPending(error) { for (const {reject, timer} of pending.values()) { clearTimeout(timer); reject(error); } pending.clear(); }
 function ensurePort() {
   if (port) return port;
@@ -91,7 +91,7 @@ function scheduleReconnect() {
 async function restoreSavedSession() {
   if (restorePromise) return restorePromise;
   restorePromise = (async () => {
-    const saved = (await chrome.storage.session.get(SESSION_KEY))[SESSION_KEY];
+    const saved = (await chrome.storage.local.get(SESSION_KEY))[SESSION_KEY];
     if (!saved?.manualArm) return;
     armed = {...saved, activeJobId: saved.activeJobId ?? null, bindingValid: true, connection: "reconnecting", lastError: null};
     try { await rearmSaved(saved); }
@@ -105,18 +105,26 @@ async function arm() {
   const state = await chrome.tabs.sendMessage(tab.id, {kind: "GET_PAGE_STATE"});
   if (!state?.ok || !state.adapterReady) throw new Error(state?.errorCode ?? "PAGE_ADAPTER_NOT_READY");
   const conversationIdentity = state.conversationIdentity; const conversationIdentityHash = await identityHash(conversationIdentity);
-  const saved = (await chrome.storage.session.get(SESSION_KEY))[SESSION_KEY];
+  const saved = (await chrome.storage.local.get(SESSION_KEY))[SESSION_KEY];
   const sessionId = saved?.conversationIdentityHash === conversationIdentityHash && saved?.expiresAt > Date.now() ? saved.sessionId : uuid();
   reconnectDisabled = false;
-  const result = await nativeRequest("ARM_SESSION", {sessionId, conversationIdentity: conversationIdentityHash, extensionVersion: EXTENSION_VERSION});
-  armed = {sessionId, conversationIdentity, conversationIdentityHash, tabId: tab.id, activeJobId: null, manualArm: true, bindingValid: true, connection: "connected", lastError: null, expiresAt: Date.now() + 1_800_000};
+  let result;
+  let effectiveSessionId = sessionId;
+  try { result = await nativeRequest("ARM_SESSION", {sessionId, conversationIdentity: conversationIdentityHash, extensionVersion: EXTENSION_VERSION}); }
+  catch (error) {
+    if (!(error instanceof Error) || error.message !== "ACTIVE_JOB_SESSION_MISMATCH") throw error;
+    result = await nativeRequest("RECOVER_SESSION", {conversationIdentity: conversationIdentityHash, extensionVersion: EXTENSION_VERSION});
+    if (typeof result.sessionId !== "string") throw new Error("RECOVERED_SESSION_INVALID");
+    effectiveSessionId = result.sessionId;
+  }
+  armed = {sessionId: effectiveSessionId, conversationIdentity, conversationIdentityHash, tabId: tab.id, activeJobId: null, manualArm: true, bindingValid: true, connection: "connected", lastError: null, expiresAt: Date.now() + 1_800_000};
   reconnectAttempts = 0; startHeartbeat();
-  await chrome.storage.session.set({[SESSION_KEY]: armed});
-  return {sessionId, conversationIdentityHash, tabId: tab.id, leaseExpiresAt: result.leaseExpiresAt};
+  await chrome.storage.local.set({[SESSION_KEY]: armed});
+  return {sessionId: effectiveSessionId, conversationIdentityHash, tabId: tab.id, leaseExpiresAt: result.leaseExpiresAt};
 }
 async function disarm() {
   reconnectDisabled = true; if (reconnectTimer !== null) clearTimeout(reconnectTimer); reconnectTimer = null; clearHeartbeat();
-  const current = armed; armed = null; await chrome.storage.session.remove(SESSION_KEY);
+  const current = armed; armed = null; await chrome.storage.local.remove(SESSION_KEY);
   if (current && port) await nativeRequest("DISARM_SESSION", {sessionId: current.sessionId}).catch(() => {});
   port?.disconnect(); port = null; rejectPending(new Error("SESSION_DISARMED")); return {armed: false};
 }

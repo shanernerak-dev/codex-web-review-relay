@@ -42,7 +42,7 @@ function harness() {
       connectNative: () => { const created = port(); ports.push(created); return created; },
       onMessage: runtimeMessages,
     },
-    storage: {session: {
+    storage: {local: {
       async get(key: string) { return {[key]: storage.get(key)}; },
       async set(value: Record<string, any>) { for (const [key, entry] of Object.entries(value)) storage.set(key, entry); },
       async remove(key: string) { storage.delete(key); },
@@ -142,4 +142,26 @@ test("same-tab conversation navigation invalidates the armed binding", async () 
   const disarm = nativePort.messages.find((message) => message.type === "DISARM_SESSION");
   h.respondTo(nativePort, disarm, "SESSION_DISARMED");
   await disarmResult;
+});
+
+test("manual arm recovers the host-bound session after extension storage loss", async () => {
+  const h = harness();
+  const armResult = h.runtime({kind: "POPUP_ARM"});
+  await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
+  const nativePort = h.ports[0];
+  const armRequest = nativePort.messages.find((message) => message.type === "ARM_SESSION");
+  h.respondTo(nativePort, armRequest, "ERROR", {errorCode: "ACTIVE_JOB_SESSION_MISMATCH"});
+  await waitFor(() => nativePort.messages.some((message) => message.type === "RECOVER_SESSION"));
+  const recovery = nativePort.messages.find((message) => message.type === "RECOVER_SESSION");
+  assert.equal(recovery.conversationIdentity, armRequest.conversationIdentity);
+  h.respondTo(nativePort, recovery, "SESSION_RECOVERED", {sessionId: "session-original", leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
+  const result = await armResult;
+  assert.equal(result.ok, true);
+  assert.equal(result.state.sessionId, "session-original");
+  assert.equal((await h.runtime({kind: "POPUP_STATUS"})).state.sessionId, "session-original");
+  const disarmResult = h.runtime({kind: "POPUP_DISARM"});
+  await waitFor(() => nativePort.messages.some((message) => message.type === "DISARM_SESSION"));
+  const disarm = nativePort.messages.find((message) => message.type === "DISARM_SESSION");
+  h.respondTo(nativePort, disarm, "SESSION_DISARMED");
+  assert.equal((await disarmResult).ok, true);
 });

@@ -265,6 +265,24 @@ export class JobStore extends EventEmitter {
     return this.getActiveSession(now) as StoredSession;
   }
 
+  recoverSession(input: {
+    conversationIdentity: string;
+    extensionVersion: string;
+    schemaMajor: number;
+    schemaMinor: number;
+    leaseMs: number;
+    now?: Date;
+  }): StoredSession {
+    const activeJob = this.getActiveJob();
+    if (!activeJob?.session_id || activeJob.conversation_identity !== input.conversationIdentity) {
+      throw new Error("RECOVERY_BINDING_MISMATCH");
+    }
+    if (!["SEND_UNCERTAIN", "SESSION_LOST"].includes(activeJob.phase)) {
+      throw new Error("SESSION_RECOVERY_PHASE_INVALID");
+    }
+    return this.armSession({...input, sessionId: activeJob.session_id});
+  }
+
   heartbeat(sessionId: string, leaseMs: number, now = new Date()): StoredSession {
     const result = this.db.prepare(`
       UPDATE active_session SET heartbeat_at = ?, lease_expires_at = ?
