@@ -78,6 +78,11 @@ export class ReviewTransportService {
     this.coordinator.transition(jobId, "SEND_UNCERTAIN", errorCode);
   }
 
+  private expirePastDeadline(job: StoredJob): StoredJob {
+    if (TERMINAL_PHASES.has(job.phase) || Date.now() < Date.parse(job.deadline)) return job;
+    return this.coordinator.transition(job.job_id, "TIMEOUT", "TURN_DEADLINE_EXCEEDED");
+  }
+
   async requestReview(handoffPath: string): Promise<TransportStatus> {
     const relay = await this.exportRelay(this.config, handoffPath);
     const fingerprint = relayFingerprint(relay);
@@ -90,15 +95,15 @@ export class ReviewTransportService {
   }
 
   private async requestReviewResolved(relay: RelayExport, fingerprint: string): Promise<TransportStatus> {
+    const active = this.store.getActiveJob();
+    if (active) this.expirePastDeadline(active);
     const persisted = this.store.getJobByFingerprint(fingerprint);
     if (persisted) {
       if (persisted.handoff_sha256 !== relay.handoff_sha256 || persisted.reviewed_head !== relay.reviewed_head) {
         throw new Error("STORED_JOB_IDENTITY_MISMATCH");
       }
       if (TERMINAL_PHASES.has(persisted.phase)) return publicStatus(persisted);
-      if (Date.now() >= Date.parse(persisted.deadline)) {
-        return publicStatus(this.coordinator.transition(persisted.job_id, "TIMEOUT", "TURN_DEADLINE_EXCEEDED"));
-      }
+      if (Date.now() >= Date.parse(persisted.deadline)) return publicStatus(this.expirePastDeadline(persisted));
     }
 
     let session = this.store.getActiveSession();
@@ -191,7 +196,7 @@ export class ReviewTransportService {
     const hasJob = typeof input.job_id === "string";
     const hasPath = typeof input.handoff_path === "string";
     if (hasJob === hasPath) throw new Error("STATUS_LOOKUP_KEY_INVALID");
-    if (hasJob) return publicStatus(this.store.getJob(input.job_id as string));
+    if (hasJob) return publicStatus(this.expirePastDeadline(this.store.getJob(input.job_id as string)));
 
     const relay = await this.exportRelay(this.config, input.handoff_path as string);
     const stored = this.store.getJobByHandoff(relay.handoff_path);

@@ -211,6 +211,42 @@ test("hard turn deadline alone persists timeout and path lookup rejects drift", 
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 
+test("expired unresolved job is terminalized before a new fingerprint claims the active slot", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const oldRelay = relayFixture({handoff_path: ".agent/review_handoffs/pr-1/old/round-01-review-request.md"});
+  const oldFingerprint = relayFingerprint(oldRelay);
+  const old = store.createOrGetJob(oldRelay, oldFingerprint, new Date(Date.now() - 1_000)).job;
+  coordinator.transition(old.job_id, "DISPATCHED");
+  coordinator.transition(old.job_id, "SESSION_LOST", "TURN_IDENTITY_AMBIGUOUS");
+  const nextRelay = relayFixture({handoff_path: ".agent/review_handoffs/pr-1/new/round-01-review-request.md", handoff_sha256: "e".repeat(64)});
+  const dispatches: Record<string, unknown>[] = [];
+  const service = new ReviewTransportService(config(root, 5, 50), store, coordinator, bridge, (message) => {
+    dispatches.push(message);
+    setImmediate(() => acceptOutbound(bridge, message));
+  }, async () => nextRelay);
+  try {
+    const status = await service.requestReview(nextRelay.handoff_path);
+    assert.equal(store.getJob(old.job_id).phase, "TIMEOUT");
+    assert.equal(store.getJob(old.job_id).error_code, "TURN_DEADLINE_EXCEEDED");
+    assert.equal(status.handoff_path, nextRelay.handoff_path);
+    assert.equal(dispatches.length, 1);
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
+test("job-id status lookup terminalizes an expired unresolved job", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const relay = relayFixture();
+  const job = store.createOrGetJob(relay, relayFingerprint(relay), new Date(Date.now() - 1_000)).job;
+  coordinator.transition(job.job_id, "DISPATCHED");
+  coordinator.transition(job.job_id, "SESSION_LOST", "TURN_IDENTITY_AMBIGUOUS");
+  const service = new ReviewTransportService(config(root), store, coordinator, bridge, () => {}, async () => relay);
+  try {
+    const status = await service.getStatus({job_id: job.job_id});
+    assert.equal(status.phase, "TIMEOUT");
+    assert.equal(status.error_code, "TURN_DEADLINE_EXCEEDED");
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
 test("restart reconciles instead of issuing a second dispatch and permits at most one recovery send", async () => {
   const {root, store, coordinator, bridge} = fixture();
   const firstWrites: Record<string, unknown>[] = [];
