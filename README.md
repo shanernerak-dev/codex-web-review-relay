@@ -63,19 +63,23 @@ This relay automates steps 2-3 while keeping **you in control**: you manually op
 
 ### Platform and Account Dependencies
 
-The relay itself is **localhost-only transport** — it has no cloud dependency and never contacts GitHub or any remote service. However, the end-to-end review workflow has external dependencies:
+The relay itself is **localhost-only transport** — it has no cloud dependency and never contacts GitHub or any remote service. The end-to-end review workflow has two layers of external dependency:
 
-| Layer | Dependency | Notes |
-|-------|-----------|-------|
-| Formal verdict surface | Code hosting platform with **PR + comment** capability | GitHub is the default (trigger envelope instruction says "publish as a GitHub PR comment"). Adaptable to GitLab/Gitee by changing the fixed instruction in your helper. |
-| Reviewer reads the PR | The web reviewer (ChatGPT) must be able to **access the PR content** | Public repos: no special setup — the reviewer can read via web. Private repos: the ChatGPT account must have the **GitHub App connector** (or equivalent platform connector) bound, so the reviewer can read private diffs and post comments. |
-| Reviewer posts the verdict | Same access as above | The reviewer writes the formal verdict as a PR comment. This requires write access to the target repo's PR. |
-| Relay transport | None (localhost) | No API key, no cloud account, no network egress from the relay process. |
+**Layer 1 — Relay transport (always required, zero external dependency):**
+The web reviewer's response is returned to the repo agent through the relay MCP channel (`assistant_output` + SHA-256). This is the **primary verdict delivery path** and requires no platform account, no PR, and no network egress from the relay process.
+
+**Layer 2 — GitHub PR comment as formal record (optional):**
+If your workflow requires a durable, publicly auditable verdict on the code hosting platform, the web reviewer can additionally publish the verdict as a PR comment. This layer is **optional** — the relay round-trip already delivers the verdict to the repo agent. Auditability without a PR can be achieved by retaining the handoff file and the relay's persisted job record (SQLite).
+
+| Scenario | PR required? | Platform connector required? | Notes |
+|----------|-------------|------------------------------|-------|
+| Relay-only verdict | No | No | Verdict returned via MCP `assistant_output`. Handoff file + job store provide local audit trail. |
+| PR comment as formal record (public repo) | Yes | No | Reviewer reads PR via web and posts comment. Works on any platform with PR + comment (GitHub, GitLab, Gitee, etc.). |
+| PR comment as formal record (private repo) | Yes | Yes | ChatGPT account must have the [GitHub App](https://chatgpt.com/gpts) connector (or equivalent) bound for private repo access. |
 
 **In short:**
-- **Open-source / public repos**: works with any platform that has PR + comment (GitHub, GitLab, Gitee, etc.). No account binding needed beyond what the reviewer already has.
-- **Private repos on GitHub**: requires the ChatGPT/GPT account to have the [GitHub App](https://chatgpt.com/gpts) connector enabled, so the web reviewer can access private PR content and publish the verdict comment.
-- **Private repos on other platforms**: requires an equivalent connector or manual access path for the reviewer.
+- **Minimum setup**: no platform account needed. The relay delivers the verdict; retain handoff files for audit.
+- **With PR comment**: add a code hosting platform with PR + comment capability. For private repos, bind the appropriate platform connector to the ChatGPT account.
 
 ### 1. Clone this repository
 
@@ -157,7 +161,7 @@ CREATED -> DISPATCHED -> USER_TURN_ACKED -> ASSISTANT_STARTED -> TURN_IDLE (comp
                                                               \-> BLOCKED (terminal)
 ```
 
-`TURN_IDLE` means the browser transport finished. It does **not** mean the review verdict is final — your agent must still read the GitHub PR comment/review to get the formal record.
+`TURN_IDLE` means the browser transport finished. The `assistant_output` field in the response contains the web reviewer's full reply text (with SHA-256 for integrity). If your workflow uses a GitHub PR comment as the formal record, your agent should additionally read the PR comment. If you rely on the relay channel alone, `assistant_output` is the verdict.
 
 ## Review-Fix Round Limiting
 
@@ -170,7 +174,7 @@ for round_num in range(1, MAX_REVIEW_ROUNDS + 1):
     handoff = create_handoff(round_num, kind="review-request" if round_num == 1 else "review-fix")
     result = mcp_call("request_review", handoff_path=handoff)
     if result["phase"] == "TURN_IDLE":
-        verdict = read_github_verdict()  # your agent reads the formal record
+        verdict = parse_verdict(result["assistant_output"])  # or read_github_verdict() if using PR comments
         if verdict == "PASS":
             break
     # ... fix findings, commit, next round
@@ -233,7 +237,7 @@ Review scope: <what the reviewer should look at>
 <your content here>
 ```
 
-The relay does not parse the handoff body — it only hashes it. The trigger envelope sent to ChatGPT contains the path, ref, head, stream, round, and kind, plus a fixed instruction to publish the verdict as a GitHub PR comment.
+The relay does not parse the handoff body — it only hashes it. The trigger envelope sent to ChatGPT contains six dynamic fields (path, ref, head, stream, round, kind) and one fixed instruction. By default the fixed instruction asks the reviewer to publish the verdict as a GitHub PR comment; this is a convention, not a transport-layer requirement — the relay returns the reviewer's response regardless of whether a PR comment is posted.
 
 ### Configuration
 
