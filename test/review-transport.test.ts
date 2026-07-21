@@ -247,6 +247,21 @@ test("job-id status lookup terminalizes an expired unresolved job", async () => 
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 
+test("job-id and canonical handoff status apply identical deadline expiry", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const relay = relayFixture();
+  const job = store.createOrGetJob(relay, relayFingerprint(relay), new Date(Date.now() - 1_000)).job;
+  coordinator.transition(job.job_id, "DISPATCHED");
+  coordinator.transition(job.job_id, "SESSION_LOST", "TURN_IDENTITY_AMBIGUOUS");
+  const service = new ReviewTransportService(config(root), store, coordinator, bridge, () => {}, async () => relay);
+  try {
+    const byPath = await service.getStatus({handoff_path: relay.handoff_path});
+    const byId = await service.getStatus({job_id: job.job_id});
+    assert.equal(byPath.phase, "TIMEOUT");
+    assert.deepEqual(byPath, byId);
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
 test("restart reconciles instead of issuing a second dispatch and permits at most one recovery send", async () => {
   const {root, store, coordinator, bridge} = fixture();
   const firstWrites: Record<string, unknown>[] = [];

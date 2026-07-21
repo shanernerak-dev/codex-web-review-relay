@@ -167,6 +167,22 @@ test("DOM adapter rejects assistant candidates from distinct stable turns", () =
   assert.throws(() => adapter.newTurn(fakeDocument(map), new Set(), "assistant"), /TURN_IDENTITY_AMBIGUOUS/);
 });
 
+test("DOM adapter groups generic conversation-turn bubbles only by container identity", () => {
+  const genericTurn = () => node({getAttribute(name) { return name === "data-testid" ? "conversation-turn" : null; }});
+  const inGenericTurn = (turn: NodeLike, text: string) => node({
+    role: "assistant",
+    innerText: text,
+    closest(selector) { return selector === "[data-testid='conversation-turn']" ? turn : null; },
+  });
+  const sameTurn = genericTurn();
+  const first = inGenericTurn(sameTurn, "reasoning");
+  const final = inGenericTurn(sameTurn, "final");
+  const map = new Map<string, NodeLike[]>([["[data-message-author-role]", [first, final]]]);
+  assert.equal(adapter.newTurn(fakeDocument(map), new Set(), "assistant"), final);
+  map.set("[data-message-author-role]", [first, inGenericTurn(genericTurn(), "other turn")]);
+  assert.throws(() => adapter.newTurn(fakeDocument(map), new Set(), "assistant"), /TURN_IDENTITY_AMBIGUOUS/);
+});
+
 test("DOM adapter recognizes completed turns when the empty composer has no send button", () => {
   const input = node({value: ""});
   const map = new Map<string, NodeLike[]>([

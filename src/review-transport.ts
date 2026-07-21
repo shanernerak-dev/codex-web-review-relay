@@ -207,6 +207,6 @@ export class ReviewTransportService {
     ) {
       throw new Error("HANDOFF_LOOKUP_DRIFT");
     }
-    return publicStatus(stored);
+    return publicStatus(this.expirePastDeadline(stored));
   }
 }

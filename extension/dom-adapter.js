@@ -48,17 +48,19 @@
   }
   function snapshotTurns(document) { return new Set(Array.from(document.querySelectorAll(TURN_SELECTOR))); }
   function turns(document) { return Array.from(document.querySelectorAll(TURN_SELECTOR)); }
-  function stableTurnKey(node) {
-    const turn = node?.closest?.("[data-turn-id]")
-      ?? node?.closest?.("[data-testid^='conversation-turn-']")
-      ?? node?.closest?.("[data-testid='conversation-turn']")
-      ?? null;
-    return String(turn?.getAttribute?.("data-turn-id") ?? turn?.getAttribute?.("data-testid") ?? "");
+  function stableTurnIdentity(node) {
+    const byId = node?.closest?.("[data-turn-id]") ?? null;
+    const turnId = byId?.getAttribute?.("data-turn-id");
+    if (turnId) return `turn-id:${turnId}`;
+    const numbered = node?.closest?.("[data-testid^='conversation-turn-']") ?? null;
+    const testId = numbered?.getAttribute?.("data-testid");
+    if (testId && testId !== "conversation-turn") return `testid:${testId}`;
+    return node?.closest?.("[data-testid='conversation-turn']") ?? null;
   }
   function oneAssistantTurn(matches) {
     if (matches.length <= 1) return matches[0] ?? null;
-    const keys = new Set(matches.map(stableTurnKey));
-    if (keys.size === 1 && !keys.has("")) return matches[matches.length - 1];
+    const identities = matches.map(stableTurnIdentity);
+    if (identities[0] !== null && identities.every((identity) => identity === identities[0])) return matches[matches.length - 1];
     throw new Error("TURN_IDENTITY_AMBIGUOUS:assistant");
   }
   function newTurn(document, baseline, role, exactText) {
