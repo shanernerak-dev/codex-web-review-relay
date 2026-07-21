@@ -39,6 +39,8 @@
     },
     "result": {"enum": ["completed", "blocked", "timeout", "mismatch", null]},
     "error_code": {"type": ["string", "null"]},
+    "assistant_output": {"type": ["string", "null"], "maxLength": 131072},
+    "assistant_output_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
     "deadline": {"type": "string", "format": "date-time"},
     "created_at": {"type": "string", "format": "date-time"},
     "updated_at": {"type": "string", "format": "date-time"}

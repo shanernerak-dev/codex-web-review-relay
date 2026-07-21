@@ -36,7 +36,9 @@
     "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "envelope": {"type": "string"},
     "envelopeSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "deadline": {"type": "string", "format": "date-time"}
-    ,"allowUnsentSend": {"type": "boolean"}
+    "deadline": {"type": "string", "format": "date-time"},
+    "allowUnsentSend": {"type": "boolean"},
+    "errorCode": {"type": "string", "minLength": 1},
+    "assistantOutput": {"type": "string", "minLength": 1, "maxLength": 131072}
   }
 }

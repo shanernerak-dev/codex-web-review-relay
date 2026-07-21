@@ -44,6 +44,10 @@ async function onNativeMessage(message) {
     message.type === "ERROR" ? request.reject(new Error(message.errorCode ?? "NATIVE_ERROR")) : request.resolve(message); return;
   }
   if (!["DISPATCH_TRIGGER", "RECONCILE_TRIGGER"].includes(message.type) || !armed || message.sessionId !== armed.sessionId) return;
+  if (armed.bindingValid !== true) {
+    await sendLifecycle("SEND_UNCERTAIN", message.jobId, "MANUAL_REARM_REQUIRED");
+    return;
+  }
   armed.activeJobId = message.jobId;
   await persistArmed();
   try {
@@ -58,13 +62,14 @@ async function onNativeMessage(message) {
     await sendLifecycle("SEND_UNCERTAIN", message.jobId, errorCode);
   }
 }
-async function sendLifecycle(type, jobId, errorCode = null) {
+async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = null) {
   if (!armed) throw new Error("SESSION_NOT_ARMED");
-  await nativeRequest(type, {sessionId: armed.sessionId, jobId, ...(errorCode ? {errorCode} : {})});
+  await nativeRequest(type, {sessionId: armed.sessionId, jobId, ...(errorCode ? {errorCode} : {}), ...(assistantOutput !== null ? {assistantOutput} : {})});
   if (["TURN_IDLE", "SESSION_LOST", "SEND_UNCERTAIN", "TURN_TIMEOUT"].includes(type)) { armed.activeJobId = null; await persistArmed(); }
 }
 async function validateSavedBinding(saved) {
   if (!saved?.manualArm || saved.expiresAt <= Date.now() || !Number.isInteger(saved.tabId)) throw new Error("SAVED_SESSION_INVALID");
+  if (saved.bindingValid !== true) throw new Error("MANUAL_REARM_REQUIRED");
   const page = await chrome.tabs.sendMessage(saved.tabId, {kind: "GET_PAGE_STATE"});
   if (!page?.ok || !page.adapterReady) throw new Error("PAGE_BINDING_DRIFT");
   return page;
@@ -77,7 +82,7 @@ async function rearmSaved(saved) {
   return result;
 }
 function scheduleReconnect() {
-  if (reconnectTimer !== null || reconnectDisabled || !armed) return;
+  if (reconnectTimer !== null || reconnectDisabled || !armed || armed.bindingValid !== true) return;
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) { armed.connection = "failed"; armed.lastError = "NATIVE_RECONNECT_EXHAUSTED"; return; }
   armed.connection = "reconnecting";
   const delay = reconnectDelay(reconnectAttempts++);
@@ -94,7 +99,7 @@ async function restoreSavedSession() {
     if (!saved?.manualArm) return;
     armed = {...saved, activeJobId: saved.activeJobId ?? null, bindingValid: true, connection: "reconnecting", lastError: null};
     try { await rearmSaved(saved); }
-    catch (error) { armed.lastError = error.message; scheduleReconnect(); }
+    catch (error) { armed.lastError = error.message; if (error.message === "MANUAL_REARM_REQUIRED") { armed.connection = "failed"; reconnectDisabled = true; } else scheduleReconnect(); }
   })();
   return restorePromise;
 }
@@ -119,16 +124,17 @@ async function disarm() {
   port?.disconnect(); port = null; rejectPending(new Error("SESSION_DISARMED")); return {armed: false};
 }
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
-  if (message.kind === "LIFECYCLE") { sendLifecycle(message.type, message.jobId, message.errorCode).then(() => respond({ok: true}), (error) => respond({ok: false, error: error.message})); return true; }
+  if (message.kind === "LIFECYCLE") { sendLifecycle(message.type, message.jobId, message.errorCode, message.assistantOutput).then(() => respond({ok: true}), (error) => respond({ok: false, error: error.message})); return true; }
   if (message.kind === "POPUP_ARM") { arm().then((state) => respond({ok: true, state}), (error) => respond({ok: false, error: error.message})); return true; }
   if (message.kind === "POPUP_DISARM") { disarm().then((state) => respond({ok: true, state}), (error) => respond({ok: false, error: error.message})); return true; }
   if (message.kind === "POPUP_STATUS") respond({ok: true, state: armed ? {armed: true, sessionId: armed.sessionId, tabId: armed.tabId, activeJobId: armed.activeJobId, connection: armed.connection, bindingValid: armed.bindingValid, lastError: armed.lastError} : {armed: false}});
 });
 chrome.tabs.onRemoved.addListener((tabId) => { if (armed?.tabId === tabId && armed.activeJobId) sendLifecycle("SESSION_LOST", armed.activeJobId).catch(() => {}); });
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (armed?.tabId !== tabId || (!changeInfo.url && changeInfo.status !== "complete")) return;
   if (changeInfo.url) {
     const jobId = armed?.activeJobId; if (armed) { armed.bindingValid = false; armed.lastError = "PAGE_NAVIGATED_REARM_REQUIRED"; }
+    if (armed) await persistArmed();
     if (jobId) sendLifecycle("SESSION_LOST", jobId).catch(() => {});
     return;
   }

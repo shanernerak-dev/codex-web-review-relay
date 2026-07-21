@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { sha256 } from "./canonical.ts";
 import type { TriggerEnvelope } from "./envelope.ts";
 import { JobCoordinator } from "./job-coordinator.ts";
 import type { StoredSession } from "./job-store.ts";
 
 export const NATIVE_SCHEMA_VERSION = Object.freeze({major: 1, minor: 0});
+const MAX_ASSISTANT_OUTPUT_BYTES = 131_072;
 
 type NativeRecord = Record<string, unknown>;
 
@@ -105,7 +107,19 @@ export class NativeBridge {
     } as const;
     const phase = phaseByType[type as keyof typeof phaseByType];
     if (!phase) throw new Error(`NATIVE_MESSAGE_TYPE_UNSUPPORTED:${type}`);
-    const current = this.coordinator.store.getJob(jobId);
+    let current = this.coordinator.store.getJob(jobId);
+    if (type === "TURN_IDLE") {
+      if (typeof message.assistantOutput !== "string" || message.assistantOutput.length === 0) throw new Error("ASSISTANT_OUTPUT_REQUIRED");
+      const output = message.assistantOutput;
+      if (Buffer.byteLength(output, "utf8") > MAX_ASSISTANT_OUTPUT_BYTES) throw new Error("ASSISTANT_OUTPUT_TOO_LARGE");
+      const outputSha256 = sha256(output);
+      if (current.phase === "TURN_IDLE") {
+        if (current.assistant_output_sha256 !== outputSha256 || current.assistant_output !== output) throw new Error("ASSISTANT_OUTPUT_RETRY_MISMATCH");
+      } else {
+        if (current.phase !== "ASSISTANT_STARTED") throw new Error(`PHASE_TRANSITION_INVALID:${current.phase}->TURN_IDLE`);
+        current = this.coordinator.store.recordAssistantOutput(jobId, output, outputSha256);
+      }
+    }
     const errorCode = typeof message.errorCode === "string" && message.errorCode.length > 0 ? message.errorCode : null;
     const job = current.phase === phase ? current : this.coordinator.transition(jobId, phase, errorCode);
     return {

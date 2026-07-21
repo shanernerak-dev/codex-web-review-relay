@@ -37,6 +37,8 @@ export interface StoredJob {
   recovery_send_used: number;
   result: "completed" | "blocked" | "timeout" | "mismatch" | null;
   error_code: string | null;
+  assistant_output: string | null;
+  assistant_output_sha256: string | null;
   deadline: string;
   created_at: string;
   updated_at: string;
@@ -83,6 +85,8 @@ export class JobStore extends EventEmitter {
         recovery_send_used INTEGER NOT NULL DEFAULT 0,
         result TEXT,
         error_code TEXT,
+        assistant_output TEXT,
+        assistant_output_sha256 TEXT,
         deadline TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -106,6 +110,8 @@ export class JobStore extends EventEmitter {
       "ALTER TABLE jobs ADD COLUMN session_id TEXT",
       "ALTER TABLE jobs ADD COLUMN conversation_identity TEXT",
       "ALTER TABLE jobs ADD COLUMN recovery_send_used INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE jobs ADD COLUMN assistant_output TEXT",
+      "ALTER TABLE jobs ADD COLUMN assistant_output_sha256 TEXT",
     ]) {
       try { this.db.exec(statement); } catch (error) {
         if (!(error instanceof Error) || !error.message.includes("duplicate column name")) throw error;
@@ -195,6 +201,18 @@ export class JobStore extends EventEmitter {
       WHERE job_id = ? AND recovery_send_used = 0
     `).run(new Date().toISOString(), jobId);
     return result.changes === 1;
+  }
+
+  recordAssistantOutput(jobId: string, output: string, outputSha256: string): StoredJob {
+    this.db.prepare(`
+      UPDATE jobs SET assistant_output = ?, assistant_output_sha256 = ?, updated_at = ?
+      WHERE job_id = ?
+    `).run(output, outputSha256, new Date().toISOString(), jobId);
+    return this.getJob(jobId);
+  }
+
+  getJobByFingerprint(fingerprint: string): StoredJob | null {
+    return (this.db.prepare("SELECT * FROM jobs WHERE fingerprint = ?").get(fingerprint) as StoredJob | undefined) ?? null;
   }
 
   armSession(input: {

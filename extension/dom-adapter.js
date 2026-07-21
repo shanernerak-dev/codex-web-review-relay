@@ -9,6 +9,7 @@
     return String(value).replace(/\u00a0/g, " ").replace(/\r\n?/g, "\n")
       .split("\n").map((line) => line.trim()).filter((line) => line.length > 0).join("\n");
   }
+  function rawText(node) { return String(node?.innerText ?? node?.textContent ?? "").replace(/\r\n?/g, "\n").trim(); }
   function unique(document, selectors, code) {
     const nodes = [];
     for (const selector of selectors) for (const node of document.querySelectorAll(selector)) if (!nodes.includes(node)) nodes.push(node);
@@ -100,5 +101,5 @@
   }
   function isGenerating(document) { return document.querySelectorAll(STOP_SELECTOR).length === 1; }
   function isIdle(document) { return document.querySelectorAll(STOP_SELECTOR).length === 0 && document.querySelectorAll(SEND_SELECTOR).length === 1; }
-  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, writeComposer, snapshotTurns, newTurn, turns, dispatch, reconcile, resumeDraft, isGenerating, isIdle};
+  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, writeComposer, snapshotTurns, newTurn, turns, dispatch, reconcile, resumeDraft, isGenerating, isIdle};
 })(globalThis);

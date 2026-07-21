@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { renderTriggerEnvelope } from "../src/envelope.ts";
+import { sha256 } from "../src/canonical.ts";
 import { JobCoordinator } from "../src/job-coordinator.ts";
 import { JobStore } from "../src/job-store.ts";
 import { NativeMessageDecoder, encodeNativeMessage } from "../src/native-framing.ts";
@@ -49,18 +50,57 @@ test("native bridge correlates session and lifecycle events", () => {
     ["ASSISTANT_STARTED", "ASSISTANT_STARTED"],
     ["TURN_IDLE", "TURN_IDLE"],
   ]) {
+    const assistantOutput = type === "TURN_IDLE" ? "formal verdict output" : undefined;
     const ack = bridge.handleInbound({
       schemaVersion: NATIVE_SCHEMA_VERSION,
       type,
       requestId: `event-${type}`,
       sessionId: "session-1",
       jobId: job.job_id,
+      ...(assistantOutput ? {assistantOutput} : {}),
     });
     assert.equal(ack.phase, phase);
   }
   assert.equal(store.getJob(job.job_id).result, "completed");
+  assert.equal(store.getJob(job.job_id).assistant_output, "formal verdict output");
+  assert.equal(store.getJob(job.job_id).assistant_output_sha256, sha256("formal verdict output"));
   store.close();
   rmSync(root, {recursive: true, force: true});
+});
+
+test("native bridge rejects oversized assistant output before completing the job", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-output-limit-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const bridge = new NativeBridge(new JobCoordinator(store), 60_000);
+  const relay = relayFixture();
+  const fingerprint = relayFingerprint(relay);
+  const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm", sessionId: "session-1", extensionVersion: "0.1.0"});
+  bridge.createDispatch({sessionId: "session-1", jobId: job.job_id, fingerprint, envelope: renderTriggerEnvelope(relay), deadline: job.deadline});
+  bridge.markDispatchWritten(job.job_id);
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "USER_TURN_ACKED", requestId: "user", sessionId: "session-1", jobId: job.job_id});
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ASSISTANT_STARTED", requestId: "assistant", sessionId: "session-1", jobId: job.job_id});
+  assert.throws(() => bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "TURN_IDLE", requestId: "idle", sessionId: "session-1", jobId: job.job_id, assistantOutput: "x".repeat(131_073)}), /ASSISTANT_OUTPUT_TOO_LARGE/);
+  assert.equal(store.getJob(job.job_id).phase, "ASSISTANT_STARTED");
+  assert.equal(store.getJob(job.job_id).assistant_output, null);
+  store.close(); rmSync(root, {recursive: true, force: true});
+});
+
+test("native bridge requires assistant output for TURN_IDLE", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-output-required-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const bridge = new NativeBridge(new JobCoordinator(store), 60_000);
+  const relay = relayFixture();
+  const fingerprint = relayFingerprint(relay);
+  const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm", sessionId: "session-1", extensionVersion: "0.1.0"});
+  bridge.createDispatch({sessionId: "session-1", jobId: job.job_id, fingerprint, envelope: renderTriggerEnvelope(relay), deadline: job.deadline});
+  bridge.markDispatchWritten(job.job_id);
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "USER_TURN_ACKED", requestId: "user", sessionId: "session-1", jobId: job.job_id});
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ASSISTANT_STARTED", requestId: "assistant", sessionId: "session-1", jobId: job.job_id});
+  assert.throws(() => bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "TURN_IDLE", requestId: "idle", sessionId: "session-1", jobId: job.job_id}), /ASSISTANT_OUTPUT_REQUIRED/);
+  assert.equal(store.getJob(job.job_id).phase, "ASSISTANT_STARTED");
+  store.close(); rmSync(root, {recursive: true, force: true});
 });
 
 test("native bridge rejects unknown schema major", () => {

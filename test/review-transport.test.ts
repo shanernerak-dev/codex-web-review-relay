@@ -8,6 +8,7 @@ import { JobCoordinator } from "../src/job-coordinator.ts";
 import { JobStore } from "../src/job-store.ts";
 import { NativeBridge, NATIVE_SCHEMA_VERSION } from "../src/native-protocol.ts";
 import { ReviewTransportService } from "../src/review-transport.ts";
+import { relayFingerprint } from "../src/relay-contract.ts";
 import { relayFixture } from "./fixtures.ts";
 
 function config(root: string, deadline = 1_000): RelayConfig {
@@ -31,10 +32,11 @@ function fixture() {
   return {root, store, coordinator, bridge};
 }
 
-function lifecycle(bridge: NativeBridge, type: string, jobId: string): void {
+function lifecycle(bridge: NativeBridge, type: string, jobId: string, assistantOutput?: string): void {
   bridge.handleInbound({
     schemaVersion: NATIVE_SCHEMA_VERSION, type, requestId: `event-${type}`,
     sessionId: "session-1", jobId,
+    ...(assistantOutput !== undefined ? {assistantOutput} : {}),
   });
 }
 
@@ -65,15 +67,72 @@ test("request_review dispatches once and concurrent retry shares the persisted j
     assert.equal(dispatches.length, 1);
     lifecycle(bridge, "USER_TURN_ACKED", jobId);
     lifecycle(bridge, "ASSISTANT_STARTED", jobId);
-    lifecycle(bridge, "TURN_IDLE", jobId);
+    lifecycle(bridge, "TURN_IDLE", jobId, "formal verdict output");
     const [firstResult, retryResult] = await Promise.all([first, retry]);
     assert.equal(firstResult.job_id, retryResult.job_id);
     assert.equal(firstResult.phase, "TURN_IDLE");
     assert.equal(firstResult.result, "completed");
+    assert.equal(firstResult.assistant_output, "formal verdict output");
+    assert.match(firstResult.assistant_output_sha256 ?? "", /^[0-9a-f]{64}$/);
     assert.equal((await service.getStatus({job_id: jobId})).phase, "TURN_IDLE");
     assert.equal((await service.getStatus({handoff_path: relayFixture().handoff_path})).job_id, jobId);
   } finally {
     store.close(); rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test("terminal same-fingerprint retries do not require an armed session", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const service = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => setImmediate(() => acceptOutbound(bridge, message)), async () => relayFixture());
+  try {
+    const pending = service.requestReview(relayFixture().handoff_path);
+    await new Promise((resolve) => setImmediate(resolve));
+    const job = store.getActiveJob();
+    assert.ok(job);
+    lifecycle(bridge, "USER_TURN_ACKED", job.job_id);
+    lifecycle(bridge, "ASSISTANT_STARTED", job.job_id);
+    lifecycle(bridge, "TURN_IDLE", job.job_id, "review complete");
+    const completed = await pending;
+    store.disarmSession("session-1");
+    const retry = await service.requestReview(relayFixture().handoff_path);
+    assert.equal(retry.job_id, completed.job_id);
+    assert.equal(retry.phase, "TURN_IDLE");
+    assert.equal(retry.assistant_output, "review complete");
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
+test("mismatch and timeout same-fingerprint retries do not require an armed session", async () => {
+  for (const terminal of ["MISMATCH", "TIMEOUT"] as const) {
+    const root = mkdtempSync(join(tmpdir(), `review-relay-terminal-${terminal.toLowerCase()}-`));
+    const store = new JobStore(join(root, "state.sqlite"));
+    const coordinator = new JobCoordinator(store);
+    const relay = relayFixture();
+    const job = store.createOrGetJob(relay, relayFingerprint(relay), new Date(Date.now() + 60_000)).job;
+    coordinator.transition(job.job_id, terminal, `TEST_${terminal}`);
+    const service = new ReviewTransportService(config(root), store, coordinator, new NativeBridge(coordinator), () => { throw new Error("UNEXPECTED_WRITE"); }, async () => relay);
+    try {
+      const retry = await service.requestReview(relay.handoff_path);
+      assert.equal(retry.job_id, job.job_id);
+      assert.equal(retry.phase, terminal);
+    } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+  }
+});
+
+test("expired created and recovery jobs time out before dispatch or recovery claim", async () => {
+  for (const phase of ["CREATED", "SEND_UNCERTAIN"] as const) {
+    const {root, store, coordinator, bridge} = fixture();
+    const writes: Record<string, unknown>[] = [];
+    const relay = relayFixture();
+    const fingerprint = relayFingerprint(relay);
+    const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() - 1_000)).job;
+    if (phase === "SEND_UNCERTAIN") coordinator.transition(job.job_id, "SEND_UNCERTAIN", "TEST_RECOVERY");
+    const service = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => writes.push(message), async () => relay);
+    try {
+      const result = await service.requestReview(relay.handoff_path);
+      assert.equal(result.phase, "TIMEOUT");
+      assert.equal(writes.length, 0);
+      assert.equal(store.getJob(job.job_id).recovery_send_used, 0);
+    } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
   }
 });
 
@@ -146,7 +205,7 @@ test("restart reconciles instead of issuing a second dispatch and permits at mos
 
     lifecycle(bridge, "USER_TURN_ACKED", jobId);
     lifecycle(bridge, "ASSISTANT_STARTED", jobId);
-    lifecycle(bridge, "TURN_IDLE", jobId);
+    lifecycle(bridge, "TURN_IDLE", jobId, "recovered review output");
     const results = await Promise.all([original, recovered, recoveredAgain]);
     assert.ok(results.every((result) => result.phase === "TURN_IDLE"));
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }

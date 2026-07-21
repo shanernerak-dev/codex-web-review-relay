@@ -14,6 +14,8 @@ async function waitFor(predicate: () => boolean, timeout = 2_000): Promise<void>
 
 function harness(ackDelayMs = 0) {
   const events: string[] = [];
+  const lifecycleMessages: any[] = [];
+  const calls = {dispatch: 0, resumeDraft: 0};
   let user = false;
   let assistant = false;
   let generating = false;
@@ -26,10 +28,11 @@ function harness(ackDelayMs = 0) {
   }
   const adapter = {
     pageSupported: () => true,
-    dispatch: () => ({baseline: new Set()}),
-    resumeDraft: () => ({baseline: new Set()}),
+    dispatch: () => { calls.dispatch += 1; return {baseline: new Set()}; },
+    resumeDraft: () => { calls.resumeDraft += 1; return {baseline: new Set()}; },
     reconcile: () => ({state: "missing", baseline: new Set()}),
-    newTurn: (_document: unknown, _baseline: Set<unknown>, role: string) => role === "user" ? (user ? {} : null) : (assistant ? {} : null),
+    newTurn: (_document: unknown, _baseline: Set<unknown>, role: string) => role === "user" ? (user ? {} : null) : (assistant ? {innerText: "final review output"} : null),
+    rawText: (node: any) => node?.innerText ?? "",
     isGenerating: () => generating,
     isIdle: () => !generating,
   };
@@ -37,6 +40,7 @@ function harness(ackDelayMs = 0) {
     runtime: {
       async sendMessage(message: any) {
         events.push(message.type);
+        lifecycleMessages.push(message);
         if (ackDelayMs) await new Promise((resolveWait) => setTimeout(resolveWait, ackDelayMs));
         return {ok: true};
       },
@@ -74,9 +78,18 @@ function harness(ackDelayMs = 0) {
     return response;
   }
 
+  function reconcile(deadlineMs = 2_000) {
+    return new Promise<any>((resolveResponse) => {
+      runtimeListeners[0]({kind: "RECONCILE_TRIGGER", jobId: "job-1", envelope: "Path: x", allowUnsentSend: true, deadline: new Date(Date.now() + deadlineMs).toISOString()}, {}, resolveResponse);
+    });
+  }
+
   return {
     events,
+    lifecycleMessages,
+    calls,
     dispatch,
+    reconcile,
     mutate() { observerCallback?.(); },
     setUser(value: boolean) { user = value; },
     setAssistant(value: boolean) { assistant = value; },
@@ -102,6 +115,21 @@ test("content monitor serializes reentrant mutations and waits for streaming-to-
   assert.equal(h.events.filter((entry) => entry === "USER_TURN_ACKED").length, 1);
   assert.equal(h.events.filter((entry) => entry === "ASSISTANT_STARTED").length, 1);
   assert.equal(h.events.filter((entry) => entry === "TURN_IDLE").length, 1);
+  assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "final review output");
+});
+
+test("expired dispatch and recovery fail before any DOM write or click", async () => {
+  const dispatchHarness = harness();
+  const dispatchResult = await dispatchHarness.dispatch(-1);
+  assert.equal(dispatchResult.ok, false);
+  assert.equal(dispatchResult.errorCode, "MESSAGE_DEADLINE_EXPIRED");
+  assert.equal(dispatchHarness.calls.dispatch, 0);
+
+  const recoveryHarness = harness();
+  const recoveryResult = await recoveryHarness.reconcile(-1);
+  assert.equal(recoveryResult.ok, false);
+  assert.equal(recoveryResult.errorCode, "MESSAGE_DEADLINE_EXPIRED");
+  assert.equal(recoveryHarness.calls.resumeDraft, 0);
 });
 
 test("content monitor reports a bounded timeout after the exact user turn", async () => {

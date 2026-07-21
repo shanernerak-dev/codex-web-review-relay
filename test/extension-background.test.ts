@@ -96,10 +96,11 @@ test("extension waits for lifecycle ACK, acknowledges dispatch receipt and recov
   assert.ok(firstPort.messages.some((message) => message.type === "DISPATCH_TRIGGER_ACCEPTED" && message.responseToRequestId === "dispatch-1"));
 
   let lifecycleSettled = false;
-  const lifecycle = h.runtime({kind: "LIFECYCLE", type: "TURN_IDLE", jobId: "job-1"}).then((value) => { lifecycleSettled = true; return value; });
+  const lifecycle = h.runtime({kind: "LIFECYCLE", type: "TURN_IDLE", jobId: "job-1", assistantOutput: "formal verdict output"}).then((value) => { lifecycleSettled = true; return value; });
   await waitFor(() => firstPort.messages.some((message) => message.type === "TURN_IDLE"));
   assert.equal(lifecycleSettled, false);
   const idleRequest = firstPort.messages.find((message) => message.type === "TURN_IDLE");
+  assert.equal(idleRequest.assistantOutput, "formal verdict output");
   h.respondTo(firstPort, idleRequest, "EVENT_ACK", {jobId: "job-1", phase: "TURN_IDLE"});
   assert.equal((await lifecycle).ok, true);
   assert.equal((await h.runtime({kind: "POPUP_STATUS"})).state.activeJobId, null);
@@ -137,9 +138,30 @@ test("same-tab conversation navigation invalidates the armed binding", async () 
   const status = await h.runtime({kind: "POPUP_STATUS"});
   assert.equal(status.state.lastError, "PAGE_NAVIGATED_REARM_REQUIRED");
 
+  const rejectedDispatch = nativePort.onMessage.emit({
+    schemaVersion: {major: 1, minor: 0}, type: "RECONCILE_TRIGGER", requestId: "reconcile-invalid",
+    sessionId: armRequest.sessionId, jobId: "job-invalid", envelope: "Path: x", deadline: new Date(Date.now() + 10_000).toISOString(),
+  });
+  await waitFor(() => nativePort.messages.some((message) => message.type === "SEND_UNCERTAIN" && message.errorCode === "MANUAL_REARM_REQUIRED"));
+  assert.equal(nativePort.messages.some((message) => message.type === "RECONCILE_TRIGGER_ACCEPTED" && message.responseToRequestId === "reconcile-invalid"), false);
+  const uncertain = nativePort.messages.find((message) => message.type === "SEND_UNCERTAIN" && message.errorCode === "MANUAL_REARM_REQUIRED");
+  h.respondTo(nativePort, uncertain, "EVENT_ACK", {jobId: "job-invalid", phase: "SEND_UNCERTAIN"});
+  await rejectedDispatch;
+
+  await nativePort.onDisconnect.emit();
+  await new Promise((resolveWait) => setTimeout(resolveWait, 400));
+  assert.equal(h.ports.length, 1);
+
+  const rearmResult = h.runtime({kind: "POPUP_ARM"});
+  await waitFor(() => h.ports.length === 2 && h.ports[1].messages.some((message) => message.type === "ARM_SESSION"));
+  const replacementPort = h.ports[1];
+  const replacementArm = replacementPort.messages.find((message) => message.type === "ARM_SESSION");
+  h.respondTo(replacementPort, replacementArm, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
+  assert.equal((await rearmResult).ok, true);
+
   const disarmResult = h.runtime({kind: "POPUP_DISARM"});
-  await waitFor(() => nativePort.messages.some((message) => message.type === "DISARM_SESSION"));
-  const disarm = nativePort.messages.find((message) => message.type === "DISARM_SESSION");
-  h.respondTo(nativePort, disarm, "SESSION_DISARMED");
+  await waitFor(() => replacementPort.messages.some((message) => message.type === "DISARM_SESSION"));
+  const disarm = replacementPort.messages.find((message) => message.type === "DISARM_SESSION");
+  h.respondTo(replacementPort, disarm, "SESSION_DISARMED");
   await disarmResult;
 });

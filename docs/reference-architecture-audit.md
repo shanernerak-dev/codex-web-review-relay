@@ -37,7 +37,7 @@
 
 首次真实 Chrome dispatch 在写入 composer 之前校验 send button，因空 composer 的 button 正常处于 disabled 状态而 fail closed，未确认产生 user turn。修复后流程固定为：读取 baseline → 写入并回读 composer → 等待唯一可见 send button enabled → click → 观察 composer 清空、生成状态或 exact new user turn 之一作为 click receipt。Extension 同时把具体 DOM error code 经 Native Messaging 持久化到 job，避免只留下不透明的 acknowledgement timeout。
 
-该修复不改变六字段 trigger envelope、fingerprint、authorization boundary 或 formal verdict readback；`SEND_UNCERTAIN` 仍只能通过 same-fingerprint reconciliation 恢复，不能 blind resend。
+该修复不改变六个动态定位字段、fingerprint、authorization boundary 或 formal verdict readback；后续按 Maintainer 决定追加一条固定 GitHub publication instruction，该固定指令不参与 fingerprint。`SEND_UNCERTAIN` 仍只能通过 same-fingerprint reconciliation 恢复，不能 blind resend。
 
 首次 pilot 同时暴露了 identity 设计错误：project conversation 使用 `/g/<project>/c/<conversation>`，普通 conversation 使用 `/c/<conversation>`；把完整 pathname hash 持久化会让 ChatGPT 路由表示参与 transport identity。Maintainer 决定由 popup `Arm` 当前 tab 作为唯一 conversation 选择权。Host 不再保存或比较 conversation URL/hash，job 也不绑定 session；`chrome.storage.local` 只保存有界 manual-arm tab/session lease 以承受 service-worker restart。发生导航后必须重新 Arm。未闭合 job 只能在 Maintainer 重新 Arm 后由同 fingerprint reconciliation 检查 exact envelope，并继续受 `recovery_send_used` 最多一次约束。
 
@@ -49,6 +49,6 @@
 
 ## 验证要求
 
-- Unit/integration：correlated ACK、dropped/duplicate ACK、同 fingerprint concurrency、restart reconciliation、hidden duplicate controls、timeout/error boundary。
+- Unit/integration：correlated ACK、dropped/duplicate ACK、同 fingerprint concurrency、terminal retry without session、restart reconciliation、navigation invalid binding、expired dispatch/recovery、assistant output persistence/size bound、hidden duplicate controls、timeout/error boundary。
 - Real Chrome：manual arm → MCP initialize → single dispatch → exact user turn → assistant start/quiet idle；随后定点覆盖 same-tab navigation、native process exit/reconnect、timeout 与 retry。
-- `TURN_IDLE` 只证明 transport completion；formal verdict 仍由 Repo Agent 独立进行 GitHub readback。
+- `TURN_IDLE` 返回最后一个 Web Agent assistant turn 与 hash，只证明 transport completion 并支持 convention 检查；formal verdict 仍由 Repo Agent 独立进行 GitHub readback。

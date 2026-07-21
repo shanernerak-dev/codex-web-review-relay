@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderTriggerEnvelope } from "../src/envelope.ts";
+import { FORMAL_REVIEW_PUBLICATION_INSTRUCTION, renderTriggerEnvelope } from "../src/envelope.ts";
 import { relayFingerprint, validateRelayExport } from "../src/relay-contract.ts";
 import { relayFixture } from "./fixtures.ts";
 
@@ -23,11 +23,12 @@ test("relay export fails closed on unknown major and scope drift", () => {
   );
 });
 
-test("fingerprint and six-field envelope are deterministic", () => {
+test("fingerprint and six locator fields plus fixed publication instruction are deterministic", () => {
   const relay = validateRelayExport(relayFixture());
   assert.equal(relayFingerprint(relay), relayFingerprint({...relay}));
   const envelope = renderTriggerEnvelope(relay);
-  assert.equal(envelope.text.split("\n").length, 6);
+  assert.equal(envelope.text.split("\n").length, 7);
+  assert.equal(envelope.text.split("\n").at(-1), FORMAL_REVIEW_PUBLICATION_INSTRUCTION);
   assert.match(envelope.text, /^Path: /);
   assert.match(envelope.text, /Reviewed head: a{40}/);
   assert.match(envelope.sha256, /^[0-9a-f]{64}$/);

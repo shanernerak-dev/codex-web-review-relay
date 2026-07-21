@@ -1,6 +1,6 @@
 # codex-web-review-relay
 
-Issue #40 的本地 MCP review relay companion repository。Stage B 提供 host/contract core；Stage C 增加 manually armed Manifest V3 extension、ChatGPT DOM adapter、真实 `request_review(handoff_path)`、status lookup 与 fail-closed reconciliation。Transport `TURN_IDLE` 不代表 formal verdict；Repo Agent 仍需独立执行 GitHub readback。
+Issue #40 的本地 MCP review relay companion repository。Stage B 提供 host/contract core；Stage C 增加 manually armed Manifest V3 extension、ChatGPT DOM adapter、真实 `request_review(handoff_path)`、status lookup 与 fail-closed reconciliation。Trigger 由六个动态定位字段和一条固定 GitHub publication instruction 组成；固定指令不参与 request fingerprint。Transport 在 `TURN_IDLE` 持久化并返回最后一个 Web Agent assistant turn 及其 SHA-256，供 Repo Agent 检查 convention compliance；它仍不代表 formal verdict，Repo Agent 必须独立执行 GitHub readback。
 
 Stage C 的第三方结构对照、license boundary 与采用/延期结论见 `docs/reference-architecture-audit.md`。本地 `reference/` 仅保存通过 ZIP 下载的 ignored audit snapshot，不进入 Git。
 
@@ -27,7 +27,7 @@ pwsh -NoProfile -File scripts/install-native-host.ps1 `
   -RepositoryRoot <MAIN_REPOSITORY_ROOT>
 ```
 
-随后在 `chrome://extensions` 以 Load unpacked 加载 `extension/`，打开目标 ChatGPT conversation，并从 popup 手动 `Arm`。`Arm` 的 current tab 是唯一 conversation 选择权；host 不保存 URL/hash，job 不绑定 conversation/session。Service-worker restart 可在有界 lease 内恢复同一 tab；tab navigation 会使 binding 失效并要求重新 `Arm`。
+随后在 `chrome://extensions` 以 Load unpacked 加载 `extension/`，打开目标 ChatGPT conversation，并从 popup 手动 `Arm`。`Arm` 的 current tab 是唯一 conversation 选择权；host 不保存 URL/hash，job 不绑定 conversation/session。Service-worker restart 只可在 binding 仍有效的有界 lease 内恢复同一 tab；tab navigation 会持久化 invalid binding、禁止自动 reconnect/dispatch，并要求重新 `Arm`。
 
 安装器同时设置当前用户环境变量 `CODEX_WEB_REVIEW_RELAY_TOKEN`；main repository 的 project Codex config 只引用变量名，不保存 token。首次安装或 token 轮换后，需要在 extension 已 `Arm`、native host 正在监听时重启 Codex，使 MCP client 读取新环境并完成初始化。
 

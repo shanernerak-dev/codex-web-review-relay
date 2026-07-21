@@ -12,6 +12,7 @@ export type RelayExporter = (config: RelayConfig, handoffPath: string) => Promis
 const RETURNABLE_PHASES = new Set<JobPhase>([
   "TURN_IDLE", "SESSION_LOST", "SEND_UNCERTAIN", "BLOCKED", "MISMATCH", "TIMEOUT",
 ]);
+const TERMINAL_PHASES = new Set<JobPhase>(["TURN_IDLE", "BLOCKED", "MISMATCH", "TIMEOUT"]);
 
 export interface TransportStatus {
   job_id: string;
@@ -22,6 +23,8 @@ export interface TransportStatus {
   phase: JobPhase;
   result: StoredJob["result"];
   error_code: string | null;
+  assistant_output: string | null;
+  assistant_output_sha256: string | null;
   deadline: string;
 }
 
@@ -35,6 +38,8 @@ function publicStatus(job: StoredJob): TransportStatus {
     phase: job.phase,
     result: job.result,
     error_code: job.error_code,
+    assistant_output: job.assistant_output,
+    assistant_output_sha256: job.assistant_output_sha256,
     deadline: job.deadline,
   };
 }
@@ -85,7 +90,18 @@ export class ReviewTransportService {
   }
 
   private async requestReviewResolved(relay: RelayExport, fingerprint: string): Promise<TransportStatus> {
-    const session = this.store.getActiveSession();
+    const persisted = this.store.getJobByFingerprint(fingerprint);
+    if (persisted) {
+      if (persisted.handoff_sha256 !== relay.handoff_sha256 || persisted.reviewed_head !== relay.reviewed_head) {
+        throw new Error("STORED_JOB_IDENTITY_MISMATCH");
+      }
+      if (TERMINAL_PHASES.has(persisted.phase)) return publicStatus(persisted);
+      if (Date.now() >= Date.parse(persisted.deadline)) {
+        return publicStatus(this.coordinator.transition(persisted.job_id, "TIMEOUT", "TURN_DEADLINE_EXCEEDED"));
+      }
+    }
+
+    let session = this.store.getActiveSession();
     if (!session) throw new Error("SESSION_NOT_ARMED");
 
     const deadline = new Date(Date.now() + this.config.requestDeadlineMs);
@@ -95,6 +111,12 @@ export class ReviewTransportService {
     }
 
     let current = job;
+    if (TERMINAL_PHASES.has(current.phase)) return publicStatus(current);
+    if (Date.now() >= Date.parse(current.deadline)) {
+      return publicStatus(this.coordinator.transition(current.job_id, "TIMEOUT", "TURN_DEADLINE_EXCEEDED"));
+    }
+    session = this.store.getActiveSession();
+    if (!session) throw new Error("SESSION_NOT_ARMED");
     if (current.phase === "CREATED") {
       const dispatch = this.bridge.createDispatch({
         sessionId: session.session_id,
@@ -121,7 +143,13 @@ export class ReviewTransportService {
     const needsRecovery = ["SESSION_LOST", "SEND_UNCERTAIN"].includes(current.phase) ||
       (["DISPATCHED", "USER_TURN_ACKED", "ASSISTANT_STARTED", "RECONCILING"].includes(current.phase) && !this.ownedJobs.has(current.job_id));
     if (needsRecovery && !this.reconciledJobs.has(current.job_id)) {
+      if (Date.now() >= Date.parse(current.deadline)) {
+        return publicStatus(this.coordinator.transition(current.job_id, "TIMEOUT", "TURN_DEADLINE_EXCEEDED"));
+      }
       if (current.phase !== "RECONCILING") current = this.coordinator.transition(current.job_id, "RECONCILING");
+      if (Date.now() >= Date.parse(current.deadline)) {
+        return publicStatus(this.coordinator.transition(current.job_id, "TIMEOUT", "TURN_DEADLINE_EXCEEDED"));
+      }
       const reconcile = this.bridge.createReconcile({
         sessionId: session.session_id,
         jobId: current.job_id,
