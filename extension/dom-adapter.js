@@ -63,6 +63,15 @@
     if (identities[0] !== null && identities.every((identity) => identity === identities[0])) return matches[matches.length - 1];
     throw new Error("TURN_IDENTITY_AMBIGUOUS:assistant");
   }
+  function rawTurnText(document, node) {
+    const identity = stableTurnIdentity(node);
+    if (identity === null) return rawText(node);
+    const parts = Array.from(document.querySelectorAll(TURN_SELECTOR))
+      .filter((candidate) => candidate.getAttribute("data-message-author-role") === "assistant" && stableTurnIdentity(candidate) === identity)
+      .map(rawText)
+      .filter((text) => text.length > 0);
+    return (parts.length > 0 ? parts.join("\n\n") : rawText(node)).trim();
+  }
   function newTurn(document, baseline, role, exactText) {
     const matches = Array.from(document.querySelectorAll(TURN_SELECTOR)).filter((node) => !baseline.has(node) && node.getAttribute("data-message-author-role") === role && (exactText === undefined || normalizedText(node) === exactText.trim()));
     if (role === "assistant") return oneAssistantTurn(matches);
@@ -121,5 +130,5 @@
     try { composer(document); return true; }
     catch { return false; }
   }
-  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, writeComposer, snapshotTurns, newTurn, turns, dispatch, reconcile, resumeDraft, isGenerating, isIdle};
+  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, writeComposer, snapshotTurns, newTurn, turns, dispatch, reconcile, resumeDraft, isGenerating, isIdle};
 })(globalThis);

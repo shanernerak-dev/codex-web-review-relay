@@ -155,7 +155,9 @@ test("DOM adapter keeps the last assistant message when one stable turn has mult
   const firstBubble = inTurn("reasoning summary");
   const finalBubble = inTurn("final review output");
   const map = new Map<string, NodeLike[]>([["[data-message-author-role]", [firstBubble, finalBubble]]]);
-  assert.equal(adapter.newTurn(fakeDocument(map), new Set(), "assistant"), finalBubble);
+  const document = fakeDocument(map);
+  assert.equal(adapter.newTurn(document, new Set(), "assistant"), finalBubble);
+  assert.equal(adapter.rawTurnText(document, finalBubble), "reasoning summary\n\nfinal review output");
 });
 
 test("DOM adapter rejects assistant candidates from distinct stable turns", () => {

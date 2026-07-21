@@ -33,6 +33,7 @@ function harness(ackDelayMs = 0) {
     reconcile: () => ({state: "missing", baseline: new Set()}),
     newTurn: (_document: unknown, _baseline: Set<unknown>, role: string) => role === "user" ? (user ? {} : null) : (assistant ? {innerText: "final review output"} : null),
     rawText: (node: any) => node?.innerText ?? "",
+    rawTurnText: (_document: unknown, node: any) => node?.innerText ?? "",
     isGenerating: () => generating,
     isIdle: () => !generating,
   };

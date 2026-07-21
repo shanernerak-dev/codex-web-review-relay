@@ -191,7 +191,7 @@ test("hard turn deadline alone persists timeout and path lookup rejects drift", 
   const {root, store, coordinator, bridge} = fixture();
   let relay = relayFixture();
   const dispatches: Record<string, unknown>[] = [];
-  const service = new ReviewTransportService(config(root, 10, 30), store, coordinator, bridge, (message) => {
+  const service = new ReviewTransportService(config(root, 10, 500), store, coordinator, bridge, (message) => {
     dispatches.push(message);
     setImmediate(() => acceptOutbound(bridge, message));
   }, async () => relay);
@@ -199,7 +199,7 @@ test("hard turn deadline alone persists timeout and path lookup rejects drift", 
     const firstSlice = await service.requestReview(relay.handoff_path);
     assert.equal(firstSlice.phase, "DISPATCHED");
     assert.equal(firstSlice.result, null);
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 550));
     const timedOut = await service.requestReview(relay.handoff_path);
     assert.equal(timedOut.phase, "TIMEOUT");
     assert.equal(timedOut.error_code, "TURN_DEADLINE_EXCEEDED");

@@ -30,7 +30,7 @@
           if (userAcked && !assistantStarted && assistantNode) { await sendLifecycle("ASSISTANT_STARTED", job); assistantStarted = true; assistantStartedAt = Date.now(); }
           if (assistantStarted && adapter.isGenerating(document)) observedGenerating = true;
           const quiet = Date.now() - Math.max(lastMutationAt, assistantStartedAt) >= 750;
-          if (assistantStarted && !adapter.isGenerating(document) && adapter.isIdle(document) && quiet) { await sendLifecycle("TURN_IDLE", job, null, adapter.rawText(assistantNode)); finish(); }
+          if (assistantStarted && !adapter.isGenerating(document) && adapter.isIdle(document) && quiet) { await sendLifecycle("TURN_IDLE", job, null, adapter.rawTurnText(document, assistantNode)); finish(); }
         } while (inspectPending && !settled);
       } catch (error) { await sendLifecycle(userAcked ? "SESSION_LOST" : "SEND_UNCERTAIN", job, error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_MONITOR_ERROR"); finish(); }
       finally { inspectRunning = false; }
