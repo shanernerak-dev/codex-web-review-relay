@@ -18,6 +18,7 @@ function harness(ackDelayMs = 0) {
   const calls = {dispatch: 0, resumeDraft: 0};
   let user = false;
   let assistant = false;
+  let assistantOutput = "final review output";
   let generating = false;
   const runtimeListeners: Array<(message: any, sender: any, respond: (value: any) => void) => boolean | void> = [];
   let observerCallback: (() => void) | null = null;
@@ -33,7 +34,7 @@ function harness(ackDelayMs = 0) {
     reconcile: () => ({state: "missing", baseline: new Set()}),
     newTurn: (_document: unknown, _baseline: Set<unknown>, role: string) => role === "user" ? (user ? {} : null) : (assistant ? {innerText: "final review output"} : null),
     rawText: (node: any) => node?.innerText ?? "",
-    rawTurnText: (_document: unknown, node: any) => node?.innerText ?? "",
+    rawTurnText: (_document: unknown, _node: any) => assistantOutput,
     isGenerating: () => generating,
     isIdle: () => !generating,
   };
@@ -67,7 +68,7 @@ function harness(ackDelayMs = 0) {
   context.globalThis = context;
   vm.runInContext(readFileSync(resolve("extension/content.js"), "utf8"), context, {filename: "content.js"});
 
-  function dispatch(deadlineMs = 2_000) {
+  function dispatch(deadlineMs = 10_000) {
     const response = new Promise<any>((resolveResponse) => {
       runtimeListeners[0]({
         kind: "DISPATCH_TRIGGER",
@@ -94,6 +95,7 @@ function harness(ackDelayMs = 0) {
     mutate() { observerCallback?.(); },
     setUser(value: boolean) { user = value; },
     setAssistant(value: boolean) { assistant = value; },
+    setAssistantOutput(value: string) { assistantOutput = value; },
     setGenerating(value: boolean) { generating = value; },
   };
 }
@@ -112,11 +114,30 @@ test("content monitor serializes reentrant mutations and waits for streaming-to-
 
   h.setGenerating(false);
   h.mutate();
-  await waitFor(() => h.events.includes("TURN_IDLE"), 1_500);
+  await waitFor(() => h.events.includes("TURN_IDLE"), 5_500);
   assert.equal(h.events.filter((entry) => entry === "USER_TURN_ACKED").length, 1);
   assert.equal(h.events.filter((entry) => entry === "ASSISTANT_STARTED").length, 1);
   assert.equal(h.events.filter((entry) => entry === "TURN_IDLE").length, 1);
   assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "final review output");
+});
+
+test("content monitor waits for the complete stable output after a partial bubble", async () => {
+  const h = harness();
+  assert.equal((await h.dispatch()).ok, true);
+  h.setUser(true);
+  h.setAssistant(true);
+  h.setGenerating(true);
+  h.mutate();
+  await waitFor(() => h.events.includes("ASSISTANT_STARTED"));
+  h.setAssistantOutput("Stage");
+  h.setGenerating(false);
+  h.mutate();
+  await new Promise((resolveWait) => setTimeout(resolveWait, 800));
+  assert.equal(h.events.includes("TURN_IDLE"), false);
+  h.setAssistantOutput("Stage C Runtime Follow-up Round complete");
+  h.mutate();
+  await waitFor(() => h.events.includes("TURN_IDLE"), 5_500);
+  assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "Stage C Runtime Follow-up Round complete");
 });
 
 test("expired dispatch and recovery fail before any DOM write or click", async () => {

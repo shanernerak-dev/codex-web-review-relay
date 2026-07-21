@@ -1,6 +1,8 @@
 (function () {
   "use strict";
   const adapter = globalThis.ReviewRelayDomAdapter;
+  const QUIET_IDLE_MS = 1_500;
+  const OUTPUT_STABILITY_MS = 1_500;
   let active = null;
   function sendLifecycle(type, job, errorCode = null, assistantOutput = null) { return chrome.runtime.sendMessage({kind: "LIFECYCLE", type, jobId: job.jobId, errorCode, ...(assistantOutput !== null ? {assistantOutput} : {})}); }
   function requireLiveDeadline(message) { if (!Number.isFinite(Date.parse(message.deadline)) || Date.now() >= Date.parse(message.deadline)) throw new Error("MESSAGE_DEADLINE_EXPIRED"); }
@@ -13,10 +15,11 @@
     let inspectPending = false;
     let observedGenerating = false;
     let assistantStartedAt = 0;
+    let candidateOutput = "";
+    let candidateOutputSince = 0;
     let assistantNode = state.assistant ?? null;
     let lastMutationAt = Date.now();
-    let quietTimer = null;
-    const finish = () => { if (settled) return; settled = true; observer.disconnect(); clearInterval(timer); if (quietTimer !== null) clearTimeout(quietTimer); active = null; };
+    const finish = () => { if (settled) return; settled = true; observer.disconnect(); clearInterval(timer); clearInterval(pollTimer); active = null; };
     const inspect = async () => {
       if (settled) return;
       if (inspectRunning) { inspectPending = true; return; }
@@ -29,16 +32,26 @@
           if (observedAssistant) assistantNode = observedAssistant;
           if (userAcked && !assistantStarted && assistantNode) { await sendLifecycle("ASSISTANT_STARTED", job); assistantStarted = true; assistantStartedAt = Date.now(); }
           if (assistantStarted && adapter.isGenerating(document)) observedGenerating = true;
-          const quiet = Date.now() - Math.max(lastMutationAt, assistantStartedAt) >= 750;
-          if (assistantStarted && !adapter.isGenerating(document) && adapter.isIdle(document) && quiet) { await sendLifecycle("TURN_IDLE", job, null, adapter.rawTurnText(document, assistantNode)); finish(); }
+          const now = Date.now();
+          const generating = adapter.isGenerating(document);
+          if (assistantStarted && generating) observedGenerating = true;
+          if (assistantStarted && !generating && adapter.isIdle(document)) {
+            const output = adapter.rawTurnText(document, assistantNode);
+            if (output !== candidateOutput) {
+              candidateOutput = output;
+              candidateOutputSince = now;
+            }
+            const quiet = now - Math.max(lastMutationAt, assistantStartedAt) >= QUIET_IDLE_MS;
+            const stable = candidateOutput.length > 0 && now - candidateOutputSince >= OUTPUT_STABILITY_MS;
+            const completionObserved = observedGenerating || now - assistantStartedAt >= OUTPUT_STABILITY_MS;
+            if (quiet && stable && completionObserved) { await sendLifecycle("TURN_IDLE", job, null, candidateOutput); finish(); }
+          }
         } while (inspectPending && !settled);
       } catch (error) { await sendLifecycle(userAcked ? "SESSION_LOST" : "SEND_UNCERTAIN", job, error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_MONITOR_ERROR"); finish(); }
       finally { inspectRunning = false; }
     };
     const observer = new MutationObserver(() => {
       lastMutationAt = Date.now();
-      if (quietTimer !== null) clearTimeout(quietTimer);
-      quietTimer = setTimeout(() => { void inspect(); }, 775);
       void inspect();
     });
     observer.observe(document.documentElement, {childList: true, subtree: true, characterData: true});
@@ -46,6 +59,7 @@
       if (Date.now() < job.deadline || settled) return;
       void sendLifecycle(userAcked ? "TURN_TIMEOUT" : "SEND_UNCERTAIN", job).finally(finish);
     }, 250);
+    const pollTimer = setInterval(() => { void inspect(); }, 250);
     void inspect();
   }
 
