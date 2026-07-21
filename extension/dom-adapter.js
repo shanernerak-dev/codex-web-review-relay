@@ -16,9 +16,9 @@
     if (visible.length !== 1) throw new Error(`${code}:${visible.length}`);
     return visible[0];
   }
-  function conversationIdentity(location) {
+  function pageSupported(location) {
     if (location.origin !== "https://chatgpt.com" || !/(^|\/)c\/[0-9a-z-]+(?:$|\/)/i.test(location.pathname)) throw new Error("PAGE_IDENTITY_UNSUPPORTED");
-    return `${location.origin}${location.pathname}`;
+    return true;
   }
   function composer(document) { return unique(document, COMPOSER_SELECTORS, "COMPOSER_IDENTITY_MISMATCH"); }
   function sendButton(document) { const button = unique(document, [SEND_SELECTOR], "SEND_BUTTON_IDENTITY_MISMATCH"); if (button.disabled || button.getAttribute?.("aria-disabled") === "true") throw new Error("SEND_BUTTON_DISABLED"); return button; }
@@ -84,5 +84,5 @@
   }
   function isGenerating(document) { return document.querySelectorAll(STOP_SELECTOR).length === 1; }
   function isIdle(document) { return document.querySelectorAll(STOP_SELECTOR).length === 0 && document.querySelectorAll(SEND_SELECTOR).length === 1; }
-  scope.ReviewRelayDomAdapter = {conversationIdentity, composer, sendButton, normalizedText, writeComposer, snapshotTurns, newTurn, turns, dispatch, reconcile, resumeDraft, isGenerating, isIdle};
+  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, writeComposer, snapshotTurns, newTurn, turns, dispatch, reconcile, resumeDraft, isGenerating, isIdle};
 })(globalThis);

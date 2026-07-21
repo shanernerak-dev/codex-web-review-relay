@@ -43,8 +43,9 @@ test("manifest public key freezes the expected unpacked extension ID", () => {
 });
 
 test("DOM adapter requires exact page, composer and send identities", async () => {
-  assert.equal(adapter.conversationIdentity({origin: "https://chatgpt.com", pathname: "/c/abc-123"}), "https://chatgpt.com/c/abc-123");
-  assert.throws(() => adapter.conversationIdentity({origin: "https://example.com", pathname: "/c/abc"}), /PAGE_IDENTITY_UNSUPPORTED/);
+  assert.equal(adapter.pageSupported({origin: "https://chatgpt.com", pathname: "/c/abc-123"}), true);
+  assert.equal(adapter.pageSupported({origin: "https://chatgpt.com", pathname: "/g/project/c/abc-123"}), true);
+  assert.throws(() => adapter.pageSupported({origin: "https://example.com", pathname: "/c/abc"}), /PAGE_IDENTITY_UNSUPPORTED/);
   const input = node({value: ""});
   const button = node({click() { this.clicked = (this.clicked ?? 0) + 1; input.value = ""; }});
   const map = new Map<string, NodeLike[]>([["#prompt-textarea", [input]], ["[contenteditable='true'][data-lexical-editor='true']", []], ["[data-testid='send-button']", [button]], ["[data-message-author-role]", []]]);

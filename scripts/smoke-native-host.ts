@@ -26,7 +26,7 @@ async function waitFor(type: string, timeoutMs = 5_000): Promise<Record<string, 
 const sessionId = randomUUID();
 child.stdin.write(encodeNativeMessage({
   schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "smoke-arm",
-  sessionId, conversationIdentity: "smoke-conversation", extensionVersion: "0.1.0",
+  sessionId, extensionVersion: "0.1.0",
 }));
 const armed = await waitFor("SESSION_ARMED");
 if (armed.responseToRequestId !== "smoke-arm") throw new Error("SMOKE_ARM_CORRELATION_FAILED");

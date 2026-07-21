@@ -121,9 +121,6 @@ export class ReviewTransportService {
     const needsRecovery = ["SESSION_LOST", "SEND_UNCERTAIN"].includes(current.phase) ||
       (["DISPATCHED", "USER_TURN_ACKED", "ASSISTANT_STARTED", "RECONCILING"].includes(current.phase) && !this.ownedJobs.has(current.job_id));
     if (needsRecovery && !this.reconciledJobs.has(current.job_id)) {
-      if (current.session_id !== session.session_id || current.conversation_identity !== session.conversation_identity) {
-        throw new Error("JOB_SESSION_MISMATCH");
-      }
       if (current.phase !== "RECONCILING") current = this.coordinator.transition(current.job_id, "RECONCILING");
       const reconcile = this.bridge.createReconcile({
         sessionId: session.session_id,

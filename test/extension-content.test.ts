@@ -25,7 +25,7 @@ function harness(ackDelayMs = 0) {
     disconnect() {}
   }
   const adapter = {
-    conversationIdentity: () => "https://chatgpt.com/c/conversation-a",
+    pageSupported: () => true,
     dispatch: () => ({baseline: new Set()}),
     resumeDraft: () => ({baseline: new Set()}),
     reconcile: () => ({state: "missing", baseline: new Set()}),
@@ -69,7 +69,6 @@ function harness(ackDelayMs = 0) {
         jobId: "job-1",
         envelope: "Path: x",
         deadline: new Date(Date.now() + deadlineMs).toISOString(),
-        conversationIdentity: "https://chatgpt.com/c/conversation-a",
       }, {}, resolveResponse);
     });
     return response;

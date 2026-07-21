@@ -135,33 +135,11 @@ test("same-tab conversation navigation invalidates the armed binding", async () 
   await h.tabUpdated.emit(7, {status: "complete", url: "https://chatgpt.com/c/conversation-b"});
   await waitFor(async () => (await h.runtime({kind: "POPUP_STATUS"})).state.bindingValid === false);
   const status = await h.runtime({kind: "POPUP_STATUS"});
-  assert.equal(status.state.lastError, "PAGE_BINDING_DRIFT");
+  assert.equal(status.state.lastError, "PAGE_NAVIGATED_REARM_REQUIRED");
 
   const disarmResult = h.runtime({kind: "POPUP_DISARM"});
   await waitFor(() => nativePort.messages.some((message) => message.type === "DISARM_SESSION"));
   const disarm = nativePort.messages.find((message) => message.type === "DISARM_SESSION");
   h.respondTo(nativePort, disarm, "SESSION_DISARMED");
   await disarmResult;
-});
-
-test("manual arm recovers the host-bound session after extension storage loss", async () => {
-  const h = harness();
-  const armResult = h.runtime({kind: "POPUP_ARM"});
-  await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
-  const nativePort = h.ports[0];
-  const armRequest = nativePort.messages.find((message) => message.type === "ARM_SESSION");
-  h.respondTo(nativePort, armRequest, "ERROR", {errorCode: "ACTIVE_JOB_SESSION_MISMATCH"});
-  await waitFor(() => nativePort.messages.some((message) => message.type === "RECOVER_SESSION"));
-  const recovery = nativePort.messages.find((message) => message.type === "RECOVER_SESSION");
-  assert.equal(recovery.conversationIdentity, armRequest.conversationIdentity);
-  h.respondTo(nativePort, recovery, "SESSION_RECOVERED", {sessionId: "session-original", leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
-  const result = await armResult;
-  assert.equal(result.ok, true);
-  assert.equal(result.state.sessionId, "session-original");
-  assert.equal((await h.runtime({kind: "POPUP_STATUS"})).state.sessionId, "session-original");
-  const disarmResult = h.runtime({kind: "POPUP_DISARM"});
-  await waitFor(() => nativePort.messages.some((message) => message.type === "DISARM_SESSION"));
-  const disarm = nativePort.messages.find((message) => message.type === "DISARM_SESSION");
-  h.respondTo(nativePort, disarm, "SESSION_DISARMED");
-  assert.equal((await disarmResult).ok, true);
 });

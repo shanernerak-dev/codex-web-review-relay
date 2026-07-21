@@ -26,7 +26,7 @@ function fixture() {
   const bridge = new NativeBridge(coordinator, 60_000);
   bridge.handleInbound({
     schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm",
-    sessionId: "session-1", conversationIdentity: "conversation-1", extensionVersion: "0.1.0",
+    sessionId: "session-1", extensionVersion: "0.1.0",
   });
   return {root, store, coordinator, bridge};
 }

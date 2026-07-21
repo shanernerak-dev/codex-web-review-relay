@@ -47,13 +47,13 @@
 
   async function startDispatch(message) {
     if (active) throw new Error("CONTENT_JOB_ALREADY_ACTIVE");
-    if (adapter.conversationIdentity(location) !== message.conversationIdentity) throw new Error("PAGE_IDENTITY_MISMATCH");
+    adapter.pageSupported(location);
     monitor(message, await adapter.dispatch(document, message.envelope));
   }
 
   async function startReconcile(message) {
     if (active) throw new Error("CONTENT_JOB_ALREADY_ACTIVE");
-    if (adapter.conversationIdentity(location) !== message.conversationIdentity) throw new Error("PAGE_IDENTITY_MISMATCH");
+    adapter.pageSupported(location);
     const observed = adapter.reconcile(document, message.envelope);
     if (observed.state === "user-present") {
       const job = {jobId: message.jobId, deadline: Date.parse(message.deadline)};
@@ -71,7 +71,7 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     try {
-      if (message.kind === "GET_PAGE_STATE") respond({ok: true, conversationIdentity: adapter.conversationIdentity(location), adapterReady: true});
+      if (message.kind === "GET_PAGE_STATE") { adapter.pageSupported(location); respond({ok: true, adapterReady: true}); }
       else if (message.kind === "DISPATCH_TRIGGER") { startDispatch(message).then(() => respond({ok: true}), (error) => respond({ok: false, errorCode: error.message.split(":", 1)[0]})); return true; }
       else if (message.kind === "RECONCILE_TRIGGER") { startReconcile(message).then(() => respond({ok: true}), (error) => respond({ok: false, errorCode: error.message.split(":", 1)[0]})); return true; }
       else respond({ok: false, errorCode: "CONTENT_MESSAGE_UNSUPPORTED"});

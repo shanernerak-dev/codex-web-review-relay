@@ -197,30 +197,8 @@ export class JobStore extends EventEmitter {
     return result.changes === 1;
   }
 
-  bindJobToSession(jobId: string, session: StoredSession): StoredJob {
-    const current = this.getJob(jobId);
-    if (current.phase !== "CREATED") throw new Error("JOB_BINDING_PHASE_INVALID");
-    if (current.session_id && (current.session_id !== session.session_id || current.conversation_identity !== session.conversation_identity)) {
-      throw new Error("JOB_SESSION_MISMATCH");
-    }
-    this.db.prepare(`
-      UPDATE jobs SET session_id = ?, conversation_identity = ?, updated_at = ?
-      WHERE job_id = ?
-    `).run(session.session_id, session.conversation_identity, new Date().toISOString(), jobId);
-    return this.getJob(jobId);
-  }
-
-  requireJobSession(jobId: string, session: StoredSession): StoredJob {
-    const job = this.getJob(jobId);
-    if (!job.session_id || job.session_id !== session.session_id || job.conversation_identity !== session.conversation_identity) {
-      throw new Error("JOB_SESSION_MISMATCH");
-    }
-    return job;
-  }
-
   armSession(input: {
     sessionId: string;
-    conversationIdentity: string;
     extensionVersion: string;
     schemaMajor: number;
     schemaMinor: number;
@@ -229,18 +207,8 @@ export class JobStore extends EventEmitter {
   }): StoredSession {
     const now = input.now ?? new Date();
     const current = this.getActiveSession(now);
-    if (current && (current.session_id !== input.sessionId || current.conversation_identity !== input.conversationIdentity)) {
+    if (current && current.session_id !== input.sessionId) {
       throw new Error("SESSION_ALREADY_ARMED");
-    }
-    const activeJob = this.getActiveJob();
-    if (activeJob?.session_id && (
-      activeJob.session_id !== input.sessionId ||
-      activeJob.conversation_identity !== input.conversationIdentity
-    )) {
-      if (["DISPATCHED", "USER_TURN_ACKED", "ASSISTANT_STARTED"].includes(activeJob.phase)) {
-        this.transitionJob(activeJob.job_id, "SESSION_LOST", "SESSION_REPLACEMENT_REJECTED");
-      }
-      throw new Error("ACTIVE_JOB_SESSION_MISMATCH");
     }
     const nowText = now.toISOString();
     const leaseExpires = new Date(now.getTime() + input.leaseMs).toISOString();
@@ -259,29 +227,12 @@ export class JobStore extends EventEmitter {
         heartbeat_at = excluded.heartbeat_at,
         lease_expires_at = excluded.lease_expires_at
     `).run(
-      input.sessionId, input.conversationIdentity, input.extensionVersion,
+      input.sessionId, "", input.extensionVersion,
       input.schemaMajor, input.schemaMinor, nowText, nowText, leaseExpires,
     );
     return this.getActiveSession(now) as StoredSession;
   }
 
-  recoverSession(input: {
-    conversationIdentity: string;
-    extensionVersion: string;
-    schemaMajor: number;
-    schemaMinor: number;
-    leaseMs: number;
-    now?: Date;
-  }): StoredSession {
-    const activeJob = this.getActiveJob();
-    if (!activeJob?.session_id || activeJob.conversation_identity !== input.conversationIdentity) {
-      throw new Error("RECOVERY_BINDING_MISMATCH");
-    }
-    if (!["SEND_UNCERTAIN", "SESSION_LOST"].includes(activeJob.phase)) {
-      throw new Error("SESSION_RECOVERY_PHASE_INVALID");
-    }
-    return this.armSession({...input, sessionId: activeJob.session_id});
-  }
 
   heartbeat(sessionId: string, leaseMs: number, now = new Date()): StoredSession {
     const result = this.db.prepare(`

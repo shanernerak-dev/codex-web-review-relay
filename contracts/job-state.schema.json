@@ -10,7 +10,6 @@
     "handoff_sha256",
     "reviewed_head",
     "session_id",
-    "conversation_identity",
     "phase",
     "deadline",
     "created_at",
@@ -23,7 +22,6 @@
     "handoff_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "reviewed_head": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "session_id": {"type": ["string", "null"]},
-    "conversation_identity": {"type": ["string", "null"]},
     "phase": {
       "enum": [
         "CREATED",

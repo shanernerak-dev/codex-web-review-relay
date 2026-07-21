@@ -73,24 +73,12 @@ export class NativeBridge {
       if (!requestId) throw new Error("NATIVE_MESSAGE_INVALID:requestId");
       const session = this.coordinator.store.armSession({
         sessionId: requireText(message, "sessionId"),
-        conversationIdentity: requireText(message, "conversationIdentity"),
         extensionVersion: requireText(message, "extensionVersion"),
         schemaMajor: peerVersion.major,
         schemaMinor: peerVersion.minor,
         leaseMs: this.leaseMs,
       });
       return this.ack(requestId, "SESSION_ARMED", session);
-    }
-    if (type === "RECOVER_SESSION") {
-      if (!requestId) throw new Error("NATIVE_MESSAGE_INVALID:requestId");
-      const session = this.coordinator.store.recoverSession({
-        conversationIdentity: requireText(message, "conversationIdentity"),
-        extensionVersion: requireText(message, "extensionVersion"),
-        schemaMajor: peerVersion.major,
-        schemaMinor: peerVersion.minor,
-        leaseMs: this.leaseMs,
-      });
-      return this.ack(requestId, "SESSION_RECOVERED", session);
     }
     if (type === "HEARTBEAT") {
       if (!requestId) throw new Error("NATIVE_MESSAGE_INVALID:requestId");
@@ -106,7 +94,6 @@ export class NativeBridge {
     const sessionId = requireText(message, "sessionId");
     const session = this.requireSession(sessionId);
     const jobId = requireText(message, "jobId");
-    this.coordinator.store.requireJobSession(jobId, session);
     const phaseByType = {
       USER_TURN_ACKED: "USER_TURN_ACKED",
       ASSISTANT_STARTED: "ASSISTANT_STARTED",
@@ -142,7 +129,6 @@ export class NativeBridge {
     if (job.phase !== "CREATED" || job.fingerprint !== input.fingerprint) {
       throw new Error("DISPATCH_PRECONDITION_FAILED");
     }
-    this.coordinator.store.bindJobToSession(input.jobId, session);
     return {
       schemaVersion: NATIVE_SCHEMA_VERSION,
       type: "DISPATCH_TRIGGER",
@@ -169,7 +155,7 @@ export class NativeBridge {
     allowUnsentSend: boolean;
   }): NativeRecord {
     const session = this.requireSession(input.sessionId);
-    const job = this.coordinator.store.requireJobSession(input.jobId, session);
+    const job = this.coordinator.store.getJob(input.jobId);
     if (job.phase !== "RECONCILING" || job.fingerprint !== input.fingerprint) throw new Error("RECONCILE_PRECONDITION_FAILED");
     return {
       schemaVersion: NATIVE_SCHEMA_VERSION,

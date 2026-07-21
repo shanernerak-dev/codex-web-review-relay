@@ -13,7 +13,6 @@ let reconnectDisabled = false;
 let restorePromise = null;
 const pending = new Map();
 function uuid() { return crypto.randomUUID(); }
-async function identityHash(value) { const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)); return Array.from(new Uint8Array(bytes), (entry) => entry.toString(16).padStart(2, "0")).join(""); }
 function reconnectDelay(attempt) { return Math.min(8_000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 125); }
 function clearHeartbeat() { if (heartbeat !== null) clearInterval(heartbeat); heartbeat = null; }
 function startHeartbeat() { clearHeartbeat(); heartbeat = setInterval(() => nativeRequest("HEARTBEAT", {sessionId: armed?.sessionId}).catch(() => {}), 10_000); }
@@ -49,8 +48,8 @@ async function onNativeMessage(message) {
   await persistArmed();
   try {
     const page = await chrome.tabs.sendMessage(armed.tabId, {kind: "GET_PAGE_STATE"});
-    if (!page?.ok || page.conversationIdentity !== armed.conversationIdentity) throw new Error("PAGE_BINDING_DRIFT");
-    const response = await chrome.tabs.sendMessage(armed.tabId, {kind: message.type, jobId: message.jobId, envelope: message.envelope, deadline: message.deadline, conversationIdentity: armed.conversationIdentity, allowUnsentSend: message.allowUnsentSend});
+    if (!page?.ok || !page.adapterReady) throw new Error("PAGE_BINDING_DRIFT");
+    const response = await chrome.tabs.sendMessage(armed.tabId, {kind: message.type, jobId: message.jobId, envelope: message.envelope, deadline: message.deadline, allowUnsentSend: message.allowUnsentSend});
     if (!response?.ok) throw new Error(response?.errorCode ?? "CONTENT_DISPATCH_REJECTED");
     ensurePort().postMessage({schemaVersion: SCHEMA_VERSION, type: `${message.type}_ACCEPTED`, responseToRequestId: message.requestId, sessionId: armed.sessionId, jobId: message.jobId});
   } catch (error) {
@@ -67,12 +66,12 @@ async function sendLifecycle(type, jobId, errorCode = null) {
 async function validateSavedBinding(saved) {
   if (!saved?.manualArm || saved.expiresAt <= Date.now() || !Number.isInteger(saved.tabId)) throw new Error("SAVED_SESSION_INVALID");
   const page = await chrome.tabs.sendMessage(saved.tabId, {kind: "GET_PAGE_STATE"});
-  if (!page?.ok || page.conversationIdentity !== saved.conversationIdentity) throw new Error("PAGE_BINDING_DRIFT");
+  if (!page?.ok || !page.adapterReady) throw new Error("PAGE_BINDING_DRIFT");
   return page;
 }
 async function rearmSaved(saved) {
   await validateSavedBinding(saved);
-  const result = await nativeRequest("ARM_SESSION", {sessionId: saved.sessionId, conversationIdentity: saved.conversationIdentityHash, extensionVersion: EXTENSION_VERSION});
+  const result = await nativeRequest("ARM_SESSION", {sessionId: saved.sessionId, extensionVersion: EXTENSION_VERSION});
   armed = {...saved, activeJobId: saved.activeJobId ?? null, bindingValid: true, connection: "connected", lastError: null};
   reconnectAttempts = 0; reconnectDisabled = false; startHeartbeat();
   return result;
@@ -104,23 +103,14 @@ async function arm() {
   if (!tab?.id || !tab.url?.startsWith("https://chatgpt.com/")) throw new Error("ACTIVE_TAB_NOT_CHATGPT");
   const state = await chrome.tabs.sendMessage(tab.id, {kind: "GET_PAGE_STATE"});
   if (!state?.ok || !state.adapterReady) throw new Error(state?.errorCode ?? "PAGE_ADAPTER_NOT_READY");
-  const conversationIdentity = state.conversationIdentity; const conversationIdentityHash = await identityHash(conversationIdentity);
   const saved = (await chrome.storage.local.get(SESSION_KEY))[SESSION_KEY];
-  const sessionId = saved?.conversationIdentityHash === conversationIdentityHash && saved?.expiresAt > Date.now() ? saved.sessionId : uuid();
+  const sessionId = saved?.tabId === tab.id && saved?.expiresAt > Date.now() ? saved.sessionId : uuid();
   reconnectDisabled = false;
-  let result;
-  let effectiveSessionId = sessionId;
-  try { result = await nativeRequest("ARM_SESSION", {sessionId, conversationIdentity: conversationIdentityHash, extensionVersion: EXTENSION_VERSION}); }
-  catch (error) {
-    if (!(error instanceof Error) || error.message !== "ACTIVE_JOB_SESSION_MISMATCH") throw error;
-    result = await nativeRequest("RECOVER_SESSION", {conversationIdentity: conversationIdentityHash, extensionVersion: EXTENSION_VERSION});
-    if (typeof result.sessionId !== "string") throw new Error("RECOVERED_SESSION_INVALID");
-    effectiveSessionId = result.sessionId;
-  }
-  armed = {sessionId: effectiveSessionId, conversationIdentity, conversationIdentityHash, tabId: tab.id, activeJobId: null, manualArm: true, bindingValid: true, connection: "connected", lastError: null, expiresAt: Date.now() + 1_800_000};
+  const result = await nativeRequest("ARM_SESSION", {sessionId, extensionVersion: EXTENSION_VERSION});
+  armed = {sessionId, tabId: tab.id, activeJobId: null, manualArm: true, bindingValid: true, connection: "connected", lastError: null, expiresAt: Date.now() + 1_800_000};
   reconnectAttempts = 0; startHeartbeat();
   await chrome.storage.local.set({[SESSION_KEY]: armed});
-  return {sessionId: effectiveSessionId, conversationIdentityHash, tabId: tab.id, leaseExpiresAt: result.leaseExpiresAt};
+  return {sessionId, tabId: tab.id, leaseExpiresAt: result.leaseExpiresAt};
 }
 async function disarm() {
   reconnectDisabled = true; if (reconnectTimer !== null) clearTimeout(reconnectTimer); reconnectTimer = null; clearHeartbeat();
@@ -132,11 +122,16 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   if (message.kind === "LIFECYCLE") { sendLifecycle(message.type, message.jobId, message.errorCode).then(() => respond({ok: true}), (error) => respond({ok: false, error: error.message})); return true; }
   if (message.kind === "POPUP_ARM") { arm().then((state) => respond({ok: true, state}), (error) => respond({ok: false, error: error.message})); return true; }
   if (message.kind === "POPUP_DISARM") { disarm().then((state) => respond({ok: true, state}), (error) => respond({ok: false, error: error.message})); return true; }
-  if (message.kind === "POPUP_STATUS") respond({ok: true, state: armed ? {armed: true, sessionId: armed.sessionId, conversationIdentityHash: armed.conversationIdentityHash, tabId: armed.tabId, activeJobId: armed.activeJobId, connection: armed.connection, bindingValid: armed.bindingValid, lastError: armed.lastError} : {armed: false}});
+  if (message.kind === "POPUP_STATUS") respond({ok: true, state: armed ? {armed: true, sessionId: armed.sessionId, tabId: armed.tabId, activeJobId: armed.activeJobId, connection: armed.connection, bindingValid: armed.bindingValid, lastError: armed.lastError} : {armed: false}});
 });
 chrome.tabs.onRemoved.addListener((tabId) => { if (armed?.tabId === tabId && armed.activeJobId) sendLifecycle("SESSION_LOST", armed.activeJobId).catch(() => {}); });
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (armed?.tabId !== tabId || (!changeInfo.url && changeInfo.status !== "complete")) return;
+  if (changeInfo.url) {
+    const jobId = armed?.activeJobId; if (armed) { armed.bindingValid = false; armed.lastError = "PAGE_NAVIGATED_REARM_REQUIRED"; }
+    if (jobId) sendLifecycle("SESSION_LOST", jobId).catch(() => {});
+    return;
+  }
   validateSavedBinding(armed).catch(async () => {
     const jobId = armed?.activeJobId; if (armed) { armed.bindingValid = false; armed.lastError = "PAGE_BINDING_DRIFT"; }
     if (jobId) await sendLifecycle("SESSION_LOST", jobId).catch(() => {});

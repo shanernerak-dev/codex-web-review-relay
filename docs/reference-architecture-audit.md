@@ -16,7 +16,7 @@
 
 ## 采用的结构原则
 
-- 从 `mcp-chrome` 借鉴 Native Messaging 的 request/response correlation、pending timeout、bounded reconnect 与连接并发保护；本项目仍保持 single-job、manually armed、same-conversation 的窄边界。
+- 从 `mcp-chrome` 借鉴 Native Messaging 的 request/response correlation、pending timeout、bounded reconnect 与连接并发保护；本项目仍保持 single-job、manually armed current-tab 的窄边界。
 - 从 `SyncNos-Webclipper` 借鉴 entrypoint / service / platform 分层、contract-first message router、runtime timeout，以及 visible ChatGPT composer 的 fail-closed 选择；不采用其代码。
 - 从 `obsidian-local-rest-api` 借鉴 localhost Bearer gate、MCP protocol/body boundary 和显式 HTTP timeout；当前批准合同继续使用 exact loopback HTTP，不引入自签 TLS/certificate UI。
 
@@ -26,9 +26,9 @@
 
 1. lifecycle event 必须等待 correlated `EVENT_ACK` 后才清理 active job。
 2. `DISPATCH_TRIGGER` / `RECONCILE_TRIGGER` 必须取得 extension acceptance ACK；write-to-stdout 不等于 browser receipt。
-3. 只对已人工 arm 的同一 tab/conversation 做 bounded reconnect，并恢复原 `session_id`；显式 Disarm 停止恢复。
+3. 只对已人工 arm 的 current tab 做 bounded reconnect；显式 Disarm 或 tab navigation 停止该 binding，重新 Arm 由 Maintainer 选择目标 conversation。
 4. content observer 必须串行处理 mutation；assistant completion 需经过 quiet window，不能在节点刚出现时立即 `TURN_IDLE`。
-5. 同 tab 导航导致的 conversation drift 必须 fail closed；dispatch 前重新验证 page identity。
+5. 同 tab 导航必须 fail closed 并要求重新 Arm；dispatch 前只验证目标仍是受支持的 ChatGPT conversation page。
 6. Native error 必须关联原 request ID；localhost MCP 只在首次有效 `ARM_SESSION` 后进入 ready/listening。
 
 低成本增强同时包括 visible-control filtering、HTTP timeout 和 popup connection/binding diagnostics。
@@ -39,7 +39,7 @@
 
 该修复不改变六字段 trigger envelope、fingerprint、authorization boundary 或 formal verdict readback；`SEND_UNCERTAIN` 仍只能通过 same-fingerprint reconciliation 恢复，不能 blind resend。
 
-Extension reload 会清空 `chrome.storage.session`，因此不能将其作为 durable binding。实现改用 `chrome.storage.local` 保存有界 manual-arm lease；若旧版本 reload 已丢失 session，extension 只能请求显式 `RECOVER_SESSION`，由 host 在 conversation identity 精确匹配且 active job 处于 `SEND_UNCERTAIN` / `SESSION_LOST` 时恢复 job 原绑定 session。不同 conversation 或其他 phase 一律拒绝。
+首次 pilot 同时暴露了 identity 设计错误：project conversation 使用 `/g/<project>/c/<conversation>`，普通 conversation 使用 `/c/<conversation>`；把完整 pathname hash 持久化会让 ChatGPT 路由表示参与 transport identity。Maintainer 决定由 popup `Arm` 当前 tab 作为唯一 conversation 选择权。Host 不再保存或比较 conversation URL/hash，job 也不绑定 session；`chrome.storage.local` 只保存有界 manual-arm tab/session lease 以承受 service-worker restart。发生导航后必须重新 Arm。未闭合 job 只能在 Maintainer 重新 Arm 后由同 fingerprint reconciliation 检查 exact envelope，并继续受 `recovery_send_used` 最多一次约束。
 
 ## 明确延期或不采纳
 

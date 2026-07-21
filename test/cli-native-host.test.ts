@@ -57,7 +57,7 @@ test("native host correlates per-frame errors and exposes MCP only after a valid
     });
     child.stdin.write(Buffer.concat([
       encodeNativeMessage({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "bad", sessionId: "session-1"}),
-      encodeNativeMessage({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "good", sessionId: "session-1", conversationIdentity: "conversation-1", extensionVersion: "0.1.0"}),
+      encodeNativeMessage({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "good", sessionId: "session-1", extensionVersion: "0.1.0"}),
     ]));
     await received;
     assert.equal(responses[0].type, "ERROR");

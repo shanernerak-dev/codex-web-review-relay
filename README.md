@@ -27,7 +27,7 @@ pwsh -NoProfile -File scripts/install-native-host.ps1 `
   -RepositoryRoot <MAIN_REPOSITORY_ROOT>
 ```
 
-随后在 `chrome://extensions` 以 Load unpacked 加载 `extension/`，打开目标 ChatGPT conversation，并从 popup 手动 `Arm`。同一 browser session 内会复用 session ID，用于 native-host restart reconciliation；完整浏览器退出后不会自动恢复 armed state。
+随后在 `chrome://extensions` 以 Load unpacked 加载 `extension/`，打开目标 ChatGPT conversation，并从 popup 手动 `Arm`。`Arm` 的 current tab 是唯一 conversation 选择权；host 不保存 URL/hash，job 不绑定 conversation/session。Service-worker restart 可在有界 lease 内恢复同一 tab；tab navigation 会使 binding 失效并要求重新 `Arm`。
 
 安装器同时设置当前用户环境变量 `CODEX_WEB_REVIEW_RELAY_TOKEN`；main repository 的 project Codex config 只引用变量名，不保存 token。首次安装或 token 轮换后，需要在 extension 已 `Arm`、native host 正在监听时重启 Codex，使 MCP client 读取新环境并完成初始化。
 
