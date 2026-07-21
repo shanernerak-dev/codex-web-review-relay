@@ -23,7 +23,8 @@ test("localhost MCP server enforces auth, origin and protocol version", async ()
     helperPath: "unused",
     nativeHostName: "dev.test.relay",
     extensionId: "a".repeat(32),
-    requestDeadlineMs: 300_000,
+    requestWaitSliceMs: 300_000,
+    turnDeadlineMs: 900_000,
   } as RelayConfig;
   const transport = {
     async requestReview(handoffPath: string) { return {job_id: "job-1", handoff_path: handoffPath, phase: "TURN_IDLE"}; },

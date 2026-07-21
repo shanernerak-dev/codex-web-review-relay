@@ -56,7 +56,8 @@ $config = [ordered]@{
     listenHost = '127.0.0.1'; listenPort = 43127; allowedOrigins = @('http://127.0.0.1:43127')
     bearerTokenPath = $tokenPath; stateDbPath = $statePath; repositoryRoot = $repo
     pythonExecutable = $python; helperPath = 'scripts/tools/check_stage_gate_readiness.py'
-    nativeHostName = $hostName; extensionId = $extensionId; requestDeadlineMs = 300000
+    nativeHostName = $hostName; extensionId = $extensionId
+    requestWaitSliceMs = 300000; turnDeadlineMs = 900000
 }
 [System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json -Depth 4), [System.Text.UTF8Encoding]::new($false))
 

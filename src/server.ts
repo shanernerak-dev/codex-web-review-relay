@@ -191,7 +191,7 @@ export function createRelayServer(
     sendJson(response, 200, jsonRpcError(message.id, -32601, "Method not found"));
   });
   server.headersTimeout = 10_000;
-  server.requestTimeout = 310_000;
+  server.requestTimeout = config.requestWaitSliceMs + 10_000;
   server.keepAliveTimeout = 5_000;
   return server;
 }

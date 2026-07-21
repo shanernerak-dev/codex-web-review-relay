@@ -11,12 +11,12 @@ import { ReviewTransportService } from "../src/review-transport.ts";
 import { relayFingerprint } from "../src/relay-contract.ts";
 import { relayFixture } from "./fixtures.ts";
 
-function config(root: string, deadline = 1_000): RelayConfig {
+function config(root: string, waitSlice = 1_000, turnDeadline = 60_000): RelayConfig {
   return {
     listenHost: "127.0.0.1", listenPort: 43127, allowedOrigins: ["http://127.0.0.1:43127"],
     bearerTokenPath: join(root, "token"), stateDbPath: join(root, "state.sqlite"),
     repositoryRoot: root, pythonExecutable: "python", helperPath: "helper.py",
-    nativeHostName: "dev.test.relay", extensionId: "a".repeat(32), requestDeadlineMs: deadline,
+    nativeHostName: "dev.test.relay", extensionId: "a".repeat(32), requestWaitSliceMs: waitSlice, turnDeadlineMs: turnDeadline,
   };
 }
 
@@ -164,13 +164,46 @@ test("dispatch write failure is persisted and retry performs reconciliation with
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 
-test("bounded wait persists timeout and path lookup rejects drift", async () => {
+test("soft wait slice returns in-progress and same-fingerprint retry completes without redispatch", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const relay = relayFixture();
+  const dispatches: Record<string, unknown>[] = [];
+  const service = new ReviewTransportService(config(root, 10, 100), store, coordinator, bridge, (message) => setImmediate(() => {
+    dispatches.push(message);
+    acceptOutbound(bridge, message);
+    lifecycle(bridge, "USER_TURN_ACKED", message.jobId as string);
+    lifecycle(bridge, "ASSISTANT_STARTED", message.jobId as string);
+  }), async () => relay);
+  try {
+    const firstSlice = await service.requestReview(relay.handoff_path);
+    assert.equal(firstSlice.phase, "ASSISTANT_STARTED");
+    assert.equal(firstSlice.result, null);
+    assert.equal(dispatches.length, 1);
+    setTimeout(() => lifecycle(bridge, "TURN_IDLE", firstSlice.job_id, "slow formal verdict"), 5);
+    const completed = await service.requestReview(relay.handoff_path);
+    assert.equal(completed.phase, "TURN_IDLE");
+    assert.equal(completed.assistant_output, "slow formal verdict");
+    assert.equal(dispatches.length, 1);
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
+test("hard turn deadline alone persists timeout and path lookup rejects drift", async () => {
   const {root, store, coordinator, bridge} = fixture();
   let relay = relayFixture();
-  const service = new ReviewTransportService(config(root, 15), store, coordinator, bridge, (message) => setImmediate(() => acceptOutbound(bridge, message)), async () => relay);
+  const dispatches: Record<string, unknown>[] = [];
+  const service = new ReviewTransportService(config(root, 10, 30), store, coordinator, bridge, (message) => {
+    dispatches.push(message);
+    setImmediate(() => acceptOutbound(bridge, message));
+  }, async () => relay);
   try {
+    const firstSlice = await service.requestReview(relay.handoff_path);
+    assert.equal(firstSlice.phase, "DISPATCHED");
+    assert.equal(firstSlice.result, null);
+    await new Promise((resolve) => setTimeout(resolve, 25));
     const timedOut = await service.requestReview(relay.handoff_path);
     assert.equal(timedOut.phase, "TIMEOUT");
+    assert.equal(timedOut.error_code, "TURN_DEADLINE_EXCEEDED");
+    assert.equal(dispatches.length, 1);
     relay = relayFixture({handoff_sha256: "d".repeat(64)});
     await assert.rejects(service.getStatus({handoff_path: relay.handoff_path}), /HANDOFF_LOOKUP_DRIFT/);
     await assert.rejects(service.getStatus({}), /STATUS_LOOKUP_KEY_INVALID/);

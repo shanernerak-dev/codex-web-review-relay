@@ -11,7 +11,8 @@ export interface RelayConfig {
   helperPath: string;
   nativeHostName: string;
   extensionId: string;
-  requestDeadlineMs: number;
+  requestWaitSliceMs: number;
+  turnDeadlineMs: number;
 }
 
 export function validateConfig(value: unknown): RelayConfig {
@@ -33,8 +34,14 @@ export function validateConfig(value: unknown): RelayConfig {
       throw new Error(`CONFIG_INVALID:${key}`);
     }
   }
-  if (!Number.isInteger(config.requestDeadlineMs) || (config.requestDeadlineMs as number) < 1_000 || (config.requestDeadlineMs as number) > 300_000) {
-    throw new Error("CONFIG_INVALID:requestDeadlineMs");
+  if (!Number.isInteger(config.requestWaitSliceMs) || (config.requestWaitSliceMs as number) < 1_000 || (config.requestWaitSliceMs as number) > 300_000) {
+    throw new Error("CONFIG_INVALID:requestWaitSliceMs");
+  }
+  if (!Number.isInteger(config.turnDeadlineMs) || (config.turnDeadlineMs as number) < 300_000 || (config.turnDeadlineMs as number) > 1_800_000) {
+    throw new Error("CONFIG_INVALID:turnDeadlineMs");
+  }
+  if ((config.turnDeadlineMs as number) < (config.requestWaitSliceMs as number)) {
+    throw new Error("CONFIG_INVALID:deadlineOrdering");
   }
   return config as unknown as RelayConfig;
 }

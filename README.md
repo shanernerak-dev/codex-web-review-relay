@@ -8,6 +8,8 @@ Canonical GitHub repository 为 `shanernerak-dev/codex-web-review-relay`，visib
 
 Native host 采用单进程 topology：Chrome 启动的 `native-host` 同时持有唯一 `JobStore` / `JobCoordinator` / `NativeBridge` 并启动 localhost MCP server，进程内 event-driven wait 不跨进程共享。
 
+Review timing 分为两个有界层级：`requestWaitSliceMs` 默认 5 分钟，只限制单次 MCP event-driven wait；soft slice 到期返回当前非终态且不停止 extension observer。同 fingerprint 再次调用只继续等待原 job，不 redispatch。`turnDeadlineMs` 默认 15 分钟，是整个 Web Agent turn 的 hard deadline；只有达到该上限才持久化 terminal `TIMEOUT`。
+
 ## 验证
 
 ```powershell

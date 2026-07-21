@@ -35,7 +35,8 @@ test("native host correlates per-frame errors and exposes MCP only after a valid
     helperPath: join(root, "helper.py"),
     nativeHostName: "dev.test.relay",
     extensionId: "a".repeat(32),
-    requestDeadlineMs: 10_000,
+    requestWaitSliceMs: 10_000,
+    turnDeadlineMs: 300_000,
   }), "utf8");
 
   const child = spawn(process.execPath, ["--experimental-strip-types", resolve("src/cli.ts"), "native-host", "--config", configPath], {

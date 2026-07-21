@@ -11,5 +11,6 @@
   "helperPath": "scripts/tools/check_stage_gate_readiness.py",
   "nativeHostName": "dev.shanernerak.codex_web_review_relay",
   "extensionId": "kkdijpckhlminpolkllmmkldlljakfem",
-  "requestDeadlineMs": 300000
+  "requestWaitSliceMs": 300000,
+  "turnDeadlineMs": 900000
 }

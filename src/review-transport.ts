@@ -104,7 +104,7 @@ export class ReviewTransportService {
     let session = this.store.getActiveSession();
     if (!session) throw new Error("SESSION_NOT_ARMED");
 
-    const deadline = new Date(Date.now() + this.config.requestDeadlineMs);
+    const deadline = new Date(Date.now() + this.config.turnDeadlineMs);
     const {job} = this.store.createOrGetJob(relay, fingerprint, deadline);
     if (job.handoff_sha256 !== relay.handoff_sha256 || job.reviewed_head !== relay.reviewed_head) {
       throw new Error("STORED_JOB_IDENTITY_MISMATCH");
@@ -174,12 +174,13 @@ export class ReviewTransportService {
 
     if (RETURNABLE_PHASES.has(current.phase)) return publicStatus(current);
     const remaining = Math.max(1, Date.parse(current.deadline) - Date.now());
+    const waitSlice = Math.min(this.config.requestWaitSliceMs, remaining);
     try {
-      return publicStatus(await this.coordinator.waitFor(current.job_id, RETURNABLE_PHASES, remaining));
+      return publicStatus(await this.coordinator.waitFor(current.job_id, RETURNABLE_PHASES, waitSlice));
     } catch (error) {
       if (!(error instanceof Error) || error.message !== "WAIT_TIMEOUT") throw error;
       const observed = this.store.getJob(current.job_id);
-      if (!RETURNABLE_PHASES.has(observed.phase)) {
+      if (!RETURNABLE_PHASES.has(observed.phase) && Date.now() >= Date.parse(observed.deadline)) {
         return publicStatus(this.coordinator.transition(observed.job_id, "TIMEOUT", "TURN_DEADLINE_EXCEEDED"));
       }
       return publicStatus(observed);
