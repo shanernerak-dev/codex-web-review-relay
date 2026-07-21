@@ -42,19 +42,33 @@ test("manifest public key freezes the expected unpacked extension ID", () => {
   assert.equal(observed, "kkdijpckhlminpolkllmmkldlljakfem");
 });
 
-test("DOM adapter requires exact page, composer and send identities", () => {
+test("DOM adapter requires exact page, composer and send identities", async () => {
   assert.equal(adapter.conversationIdentity({origin: "https://chatgpt.com", pathname: "/c/abc-123"}), "https://chatgpt.com/c/abc-123");
   assert.throws(() => adapter.conversationIdentity({origin: "https://example.com", pathname: "/c/abc"}), /PAGE_IDENTITY_UNSUPPORTED/);
   const input = node({value: ""});
-  const button = node();
+  const button = node({click() { this.clicked = (this.clicked ?? 0) + 1; input.value = ""; }});
   const map = new Map<string, NodeLike[]>([["#prompt-textarea", [input]], ["[contenteditable='true'][data-lexical-editor='true']", []], ["[data-testid='send-button']", [button]], ["[data-message-author-role]", []]]);
   const document = fakeDocument(map);
-  const state = adapter.dispatch(document, "Path: example");
-  assert.equal(input.value, "Path: example");
+  const state = await adapter.dispatch(document, "Path: example");
+  assert.equal(input.value, "");
   assert.equal(button.clicked, 1);
   assert.equal(state.baseline.size, 0);
   map.set("[data-testid='send-button']", [button, node()]);
   assert.throws(() => adapter.sendButton(document), /SEND_BUTTON_IDENTITY_MISMATCH/);
+});
+
+test("DOM adapter fills the composer before waiting for the send button", async () => {
+  const button = node({disabled: true, click() { this.clicked = (this.clicked ?? 0) + 1; input.value = ""; }});
+  const input = node({value: "", dispatchEvent() { button.disabled = false; }});
+  const map = new Map<string, NodeLike[]>([
+    ["#prompt-textarea", [input]],
+    ["[contenteditable='true'][data-lexical-editor='true']", []],
+    ["[data-testid='send-button']", [button]],
+    ["[data-message-author-role]", []],
+  ]);
+  await adapter.dispatch(fakeDocument(map), "envelope");
+  assert.equal(button.clicked, 1);
+  assert.equal(input.value, "");
 });
 
 test("DOM adapter matches only new exact user turn then assistant idle", () => {
@@ -74,9 +88,9 @@ test("DOM adapter matches only new exact user turn then assistant idle", () => {
   assert.equal(adapter.isIdle(document), false);
 });
 
-test("DOM adapter reconciles existing user turn or one exact unsent draft", () => {
+test("DOM adapter reconciles existing user turn or one exact unsent draft", async () => {
   const input = node({value: "envelope"});
-  const send = node();
+  const send = node({click() { this.clicked = (this.clicked ?? 0) + 1; input.value = ""; }});
   const user = node({role: "user", innerText: "envelope"});
   const assistant = node({role: "assistant", innerText: "done"});
   const map = new Map<string, NodeLike[]>([["#prompt-textarea", [input]], ["[contenteditable='true'][data-lexical-editor='true']", []], ["[data-testid='send-button']", [send]], ["[data-message-author-role]", [user, assistant]]]);
@@ -86,16 +100,16 @@ test("DOM adapter reconciles existing user turn or one exact unsent draft", () =
   assert.equal(present.assistant, assistant);
   map.set("[data-message-author-role]", []);
   assert.equal(adapter.reconcile(document, "envelope").state, "draft-unsent");
-  adapter.resumeDraft(document, "envelope");
+  await adapter.resumeDraft(document, "envelope");
   assert.equal(send.clicked, 1);
   input.value = "different";
   assert.equal(adapter.reconcile(document, "envelope").state, "missing");
 });
 
-test("DOM adapter ignores hidden duplicate controls but rejects two visible controls", () => {
+test("DOM adapter ignores hidden duplicate controls but rejects two visible controls", async () => {
   const visibleInput = node({value: "", getClientRects: () => [{}]});
   const hiddenInput = node({value: "", getClientRects: () => []});
-  const visibleSend = node({getClientRects: () => [{}]});
+  const visibleSend = node({getClientRects: () => [{}], click() { this.clicked = (this.clicked ?? 0) + 1; visibleInput.value = ""; }});
   const hiddenSend = node({getClientRects: () => []});
   const map = new Map<string, NodeLike[]>([
     ["#prompt-textarea", [visibleInput, hiddenInput]],
@@ -104,8 +118,8 @@ test("DOM adapter ignores hidden duplicate controls but rejects two visible cont
     ["[data-message-author-role]", []],
   ]);
   const document = fakeDocument(map);
-  adapter.dispatch(document, "envelope");
-  assert.equal(visibleInput.value, "envelope");
+  await adapter.dispatch(document, "envelope");
+  assert.equal(visibleInput.value, "");
   map.set("#prompt-textarea", [visibleInput, node({value: "", getClientRects: () => [{}]})]);
   assert.throws(() => adapter.composer(document), /COMPOSER_IDENTITY_MISMATCH/);
 });

@@ -2,7 +2,7 @@
   "use strict";
   const adapter = globalThis.ReviewRelayDomAdapter;
   let active = null;
-  function sendLifecycle(type, job) { return chrome.runtime.sendMessage({kind: "LIFECYCLE", type, jobId: job.jobId}); }
+  function sendLifecycle(type, job, errorCode = null) { return chrome.runtime.sendMessage({kind: "LIFECYCLE", type, jobId: job.jobId, errorCode}); }
 
   function monitor(message, state, userAcked = false, assistantStarted = false) {
     const job = {jobId: message.jobId, deadline: Date.parse(message.deadline)};
@@ -28,7 +28,7 @@
           const quiet = Date.now() - Math.max(lastMutationAt, assistantStartedAt) >= 750;
           if (assistantStarted && !adapter.isGenerating(document) && adapter.isIdle(document) && quiet) { await sendLifecycle("TURN_IDLE", job); finish(); }
         } while (inspectPending && !settled);
-      } catch { await sendLifecycle(userAcked ? "SESSION_LOST" : "SEND_UNCERTAIN", job); finish(); }
+      } catch (error) { await sendLifecycle(userAcked ? "SESSION_LOST" : "SEND_UNCERTAIN", job, error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_MONITOR_ERROR"); finish(); }
       finally { inspectRunning = false; }
     };
     const observer = new MutationObserver(() => {
@@ -45,10 +45,10 @@
     void inspect();
   }
 
-  function startDispatch(message) {
+  async function startDispatch(message) {
     if (active) throw new Error("CONTENT_JOB_ALREADY_ACTIVE");
     if (adapter.conversationIdentity(location) !== message.conversationIdentity) throw new Error("PAGE_IDENTITY_MISMATCH");
-    monitor(message, adapter.dispatch(document, message.envelope));
+    monitor(message, await adapter.dispatch(document, message.envelope));
   }
 
   async function startReconcile(message) {
@@ -63,7 +63,7 @@
       return;
     }
     if (observed.state === "draft-unsent" && message.allowUnsentSend === true) {
-      monitor(message, adapter.resumeDraft(document, message.envelope));
+      monitor(message, await adapter.resumeDraft(document, message.envelope));
       return;
     }
     await sendLifecycle("RECONCILE_MISMATCH", {jobId: message.jobId});
@@ -72,7 +72,7 @@
   chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     try {
       if (message.kind === "GET_PAGE_STATE") respond({ok: true, conversationIdentity: adapter.conversationIdentity(location), adapterReady: true});
-      else if (message.kind === "DISPATCH_TRIGGER") { startDispatch(message); respond({ok: true}); }
+      else if (message.kind === "DISPATCH_TRIGGER") { startDispatch(message).then(() => respond({ok: true}), (error) => respond({ok: false, errorCode: error.message.split(":", 1)[0]})); return true; }
       else if (message.kind === "RECONCILE_TRIGGER") { startReconcile(message).then(() => respond({ok: true}), (error) => respond({ok: false, errorCode: error.message.split(":", 1)[0]})); return true; }
       else respond({ok: false, errorCode: "CONTENT_MESSAGE_UNSUPPORTED"});
     } catch (error) { respond({ok: false, errorCode: error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_ERROR"}); }

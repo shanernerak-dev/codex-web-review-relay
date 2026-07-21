@@ -53,13 +53,15 @@ async function onNativeMessage(message) {
     const response = await chrome.tabs.sendMessage(armed.tabId, {kind: message.type, jobId: message.jobId, envelope: message.envelope, deadline: message.deadline, conversationIdentity: armed.conversationIdentity, allowUnsentSend: message.allowUnsentSend});
     if (!response?.ok) throw new Error(response?.errorCode ?? "CONTENT_DISPATCH_REJECTED");
     ensurePort().postMessage({schemaVersion: SCHEMA_VERSION, type: `${message.type}_ACCEPTED`, responseToRequestId: message.requestId, sessionId: armed.sessionId, jobId: message.jobId});
-  } catch {
-    await sendLifecycle("SEND_UNCERTAIN", message.jobId);
+  } catch (error) {
+    const errorCode = error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_DISPATCH_ERROR";
+    if (armed) { armed.lastError = errorCode; await persistArmed(); }
+    await sendLifecycle("SEND_UNCERTAIN", message.jobId, errorCode);
   }
 }
-async function sendLifecycle(type, jobId) {
+async function sendLifecycle(type, jobId, errorCode = null) {
   if (!armed) throw new Error("SESSION_NOT_ARMED");
-  await nativeRequest(type, {sessionId: armed.sessionId, jobId});
+  await nativeRequest(type, {sessionId: armed.sessionId, jobId, ...(errorCode ? {errorCode} : {})});
   if (["TURN_IDLE", "SESSION_LOST", "SEND_UNCERTAIN", "TURN_TIMEOUT"].includes(type)) { armed.activeJobId = null; await persistArmed(); }
 }
 async function validateSavedBinding(saved) {
@@ -119,7 +121,7 @@ async function disarm() {
   port?.disconnect(); port = null; rejectPending(new Error("SESSION_DISARMED")); return {armed: false};
 }
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
-  if (message.kind === "LIFECYCLE") { sendLifecycle(message.type, message.jobId).then(() => respond({ok: true}), (error) => respond({ok: false, error: error.message})); return true; }
+  if (message.kind === "LIFECYCLE") { sendLifecycle(message.type, message.jobId, message.errorCode).then(() => respond({ok: true}), (error) => respond({ok: false, error: error.message})); return true; }
   if (message.kind === "POPUP_ARM") { arm().then((state) => respond({ok: true, state}), (error) => respond({ok: false, error: error.message})); return true; }
   if (message.kind === "POPUP_DISARM") { disarm().then((state) => respond({ok: true, state}), (error) => respond({ok: false, error: error.message})); return true; }
   if (message.kind === "POPUP_STATUS") respond({ok: true, state: armed ? {armed: true, sessionId: armed.sessionId, conversationIdentityHash: armed.conversationIdentityHash, tabId: armed.tabId, activeJobId: armed.activeJobId, connection: armed.connection, bindingValid: armed.bindingValid, lastError: armed.lastError} : {armed: false}});

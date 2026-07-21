@@ -109,6 +109,22 @@ test("native bridge maps extension deadline to TIMEOUT", () => {
   store.close(); rmSync(root, {recursive: true, force: true});
 });
 
+test("native bridge persists the extension send failure code", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-send-error-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const bridge = new NativeBridge(new JobCoordinator(store), 60_000);
+  const relay = relayFixture();
+  const fingerprint = relayFingerprint(relay);
+  const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm", sessionId: "session-1", conversationIdentity: "conversation-1", extensionVersion: "0.1.0"});
+  bridge.createDispatch({sessionId: "session-1", jobId: job.job_id, fingerprint, envelope: renderTriggerEnvelope(relay), deadline: job.deadline});
+  bridge.markDispatchWritten(job.job_id);
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "SEND_UNCERTAIN", requestId: "send-error", sessionId: "session-1", jobId: job.job_id, errorCode: "SEND_BUTTON_ENABLE_TIMEOUT"});
+  assert.equal(store.getJob(job.job_id).phase, "SEND_UNCERTAIN");
+  assert.equal(store.getJob(job.job_id).error_code, "SEND_BUTTON_ENABLE_TIMEOUT");
+  store.close(); rmSync(root, {recursive: true, force: true});
+});
+
 test("native bridge accepts fail-closed reconciliation mismatch", () => {
   const root = mkdtempSync(join(tmpdir(), "review-relay-native-reconcile-"));
   const store = new JobStore(join(root, "state.sqlite"));

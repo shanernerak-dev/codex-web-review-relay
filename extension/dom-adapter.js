@@ -35,7 +35,34 @@
     if (matches.length > 1) throw new Error(`TURN_IDENTITY_AMBIGUOUS:${role}`);
     return matches[0] ?? null;
   }
-  function dispatch(document, envelope) { const baseline = snapshotTurns(document); const input = composer(document); const button = sendButton(document); writeComposer(document, input, envelope); button.click(); return {baseline, input, button}; }
+  function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+  async function waitFor(document, predicate, errorCode, timeoutMs = 2_500) {
+    const deadline = Date.now() + timeoutMs;
+    let lastError = null;
+    while (Date.now() < deadline) {
+      try { const value = predicate(); if (value) return value; }
+      catch (error) { lastError = error; }
+      await sleep(25);
+    }
+    if (lastError instanceof Error && !String(lastError.message).startsWith("SEND_BUTTON_DISABLED")) throw lastError;
+    throw new Error(errorCode);
+  }
+  async function clickAndConfirm(document, state, envelope) {
+    const button = await waitFor(document, () => sendButton(document), "SEND_BUTTON_ENABLE_TIMEOUT");
+    button.click();
+    await waitFor(document, () => {
+      if (normalizedText(state.input) === "") return true;
+      if (isGenerating(document)) return true;
+      return Boolean(newTurn(document, state.baseline, "user", envelope));
+    }, "SEND_CLICK_RECEIPT_MISSING");
+    return {...state, button};
+  }
+  async function dispatch(document, envelope) {
+    const baseline = snapshotTurns(document);
+    const input = composer(document);
+    writeComposer(document, input, envelope);
+    return clickAndConfirm(document, {baseline, input}, envelope);
+  }
   function reconcile(document, envelope) {
     const all = turns(document);
     const users = all.filter((node) => node.getAttribute("data-message-author-role") === "user" && normalizedText(node) === envelope.trim());
@@ -49,13 +76,11 @@
     try { draftExact = normalizedText(composer(document)) === envelope.trim(); } catch {}
     return {state: draftExact ? "draft-unsent" : "missing", baseline: new Set(all)};
   }
-  function resumeDraft(document, envelope) {
+  async function resumeDraft(document, envelope) {
     const input = composer(document);
     if (normalizedText(input) !== envelope.trim()) throw new Error("RECONCILE_DRAFT_MISMATCH");
-    const button = sendButton(document);
     const baseline = snapshotTurns(document);
-    button.click();
-    return {baseline, input, button};
+    return clickAndConfirm(document, {baseline, input}, envelope);
   }
   function isGenerating(document) { return document.querySelectorAll(STOP_SELECTOR).length === 1; }
   function isIdle(document) { return document.querySelectorAll(STOP_SELECTOR).length === 0 && document.querySelectorAll(SEND_SELECTOR).length === 1; }

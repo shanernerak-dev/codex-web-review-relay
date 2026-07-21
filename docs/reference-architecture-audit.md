@@ -33,6 +33,12 @@
 
 低成本增强同时包括 visible-control filtering、HTTP timeout 和 popup connection/binding diagnostics。
 
+## Round 1 pilot finding
+
+首次真实 Chrome dispatch 在写入 composer 之前校验 send button，因空 composer 的 button 正常处于 disabled 状态而 fail closed，未确认产生 user turn。修复后流程固定为：读取 baseline → 写入并回读 composer → 等待唯一可见 send button enabled → click → 观察 composer 清空、生成状态或 exact new user turn 之一作为 click receipt。Extension 同时把具体 DOM error code 经 Native Messaging 持久化到 job，避免只留下不透明的 acknowledgement timeout。
+
+该修复不改变六字段 trigger envelope、fingerprint、authorization boundary 或 formal verdict readback；`SEND_UNCERTAIN` 仍只能通过 same-fingerprint reconciliation 恢复，不能 blind resend。
+
 ## 明确延期或不采纳
 
 可延期：offscreen keepalive、多 MCP session SDK、通用 queue、跨浏览器 abstraction、通用 selector engine。真实 Chrome pilot 若证明 MV3 service worker 仍会在 active Native port 下失活，再单独评估 offscreen document。

@@ -108,7 +108,8 @@ export class NativeBridge {
     const phase = phaseByType[type as keyof typeof phaseByType];
     if (!phase) throw new Error(`NATIVE_MESSAGE_TYPE_UNSUPPORTED:${type}`);
     const current = this.coordinator.store.getJob(jobId);
-    const job = current.phase === phase ? current : this.coordinator.transition(jobId, phase);
+    const errorCode = typeof message.errorCode === "string" && message.errorCode.length > 0 ? message.errorCode : null;
+    const job = current.phase === phase ? current : this.coordinator.transition(jobId, phase, errorCode);
     return {
       schemaVersion: NATIVE_SCHEMA_VERSION,
       type: "EVENT_ACK",
