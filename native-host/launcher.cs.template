@@ -1,0 +1,45 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
+
+internal static class ReviewRelayLauncher
+{
+    private static string Decode(string value) { return Encoding.UTF8.GetString(Convert.FromBase64String(value)); }
+    private static string Quote(string value) { return "\"" + value.Replace("\"", "\\\"") + "\""; }
+    private static void Pump(Stream source, Stream destination, bool closeDestination)
+    {
+        var buffer = new byte[8192];
+        int count;
+        while ((count = source.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            destination.Write(buffer, 0, count);
+            destination.Flush();
+        }
+        if (closeDestination) destination.Close();
+    }
+
+    public static int Main()
+    {
+        var start = new ProcessStartInfo
+        {
+            FileName = Decode("@@NODE_B64@@"),
+            Arguments = "--experimental-strip-types " + Quote(Decode("@@CLI_B64@@")) + " native-host --config " + Quote(Decode("@@CONFIG_B64@@")),
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using (var child = Process.Start(start))
+        {
+            var input = Task.Factory.StartNew(() => Pump(Console.OpenStandardInput(), child.StandardInput.BaseStream, true), TaskCreationOptions.LongRunning);
+            var output = Task.Factory.StartNew(() => Pump(child.StandardOutput.BaseStream, Console.OpenStandardOutput(), false), TaskCreationOptions.LongRunning);
+            var error = Task.Factory.StartNew(() => Pump(child.StandardError.BaseStream, Console.OpenStandardError(), false), TaskCreationOptions.LongRunning);
+            child.WaitForExit();
+            Task.WaitAll(output, error);
+            return child.ExitCode;
+        }
+    }
+}

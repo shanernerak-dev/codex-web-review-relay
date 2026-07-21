@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { safeEqual } from "./canonical.ts";
 import type { RelayConfig } from "./config.ts";
 import type { JobStore } from "./job-store.ts";
+import type { ReviewTransportService } from "./review-transport.ts";
 
 export const MCP_PROTOCOL_VERSION = "2025-11-25";
 const MAX_BODY_BYTES = 1_048_576;
@@ -46,7 +47,12 @@ async function readJsonBody(request: IncomingMessage): Promise<JsonRpcRequest> {
   return value as JsonRpcRequest;
 }
 
-export function createRelayServer(config: RelayConfig, bearerToken: string, store: JobStore): Server {
+export function createRelayServer(
+  config: RelayConfig,
+  bearerToken: string,
+  store: JobStore,
+  transport?: ReviewTransportService,
+): Server {
   if (config.listenHost !== "127.0.0.1" && config.listenHost !== "::1") {
     throw new Error("LISTEN_HOST_NOT_LOOPBACK");
   }
@@ -123,7 +129,7 @@ export function createRelayServer(config: RelayConfig, bearerToken: string, stor
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: {tools: {listChanged: false}},
           serverInfo: {name: "codex-web-review-relay", version: "0.1.0"},
-          instructions: "Stage B host core only; browser dispatch remains disabled until Stage C authorization.",
+          instructions: "Transport completion is not a formal review verdict; GitHub readback remains external.",
         },
       });
       return;
@@ -143,14 +149,43 @@ export function createRelayServer(config: RelayConfig, bearerToken: string, stor
       return;
     }
     if (message.method === "tools/call") {
-      sendJson(response, 200, {
-        jsonrpc: "2.0",
-        id: message.id ?? null,
-        result: {
-          content: [{type: "text", text: "STAGE_C_NOT_IMPLEMENTED: transport dispatch is intentionally disabled"}],
-          isError: true,
-        },
-      });
+      const params = message.params ?? {};
+      const name = params.name;
+      const args = params.arguments;
+      if (!transport || typeof name !== "string" || args === null || typeof args !== "object" || Array.isArray(args)) {
+        sendJson(response, 200, jsonRpcError(message.id, -32602, "Invalid tool call"));
+        return;
+      }
+      try {
+        let result: unknown;
+        if (name === "request_review") {
+          const keys = Object.keys(args as Record<string, unknown>);
+          if (keys.length !== 1 || typeof (args as Record<string, unknown>).handoff_path !== "string") {
+            throw new Error("REQUEST_REVIEW_INPUT_INVALID");
+          }
+          result = await transport.requestReview((args as {handoff_path: string}).handoff_path);
+        } else if (name === "get_review_transport_status") {
+          result = await transport.getStatus(args as {job_id?: string; handoff_path?: string});
+        } else {
+          sendJson(response, 200, jsonRpcError(message.id, -32601, "Tool not found"));
+          return;
+        }
+        const text = JSON.stringify(result);
+        sendJson(response, 200, {
+          jsonrpc: "2.0", id: message.id ?? null,
+          result: {content: [{type: "text", text}], structuredContent: result, isError: false},
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "TRANSPORT_ERROR";
+        const errorCode = detail.split(":", 1)[0];
+        sendJson(response, 200, {
+          jsonrpc: "2.0", id: message.id ?? null,
+          result: {
+            content: [{type: "text", text: JSON.stringify({error_code: errorCode})}],
+            structuredContent: {error_code: errorCode}, isError: true,
+          },
+        });
+      }
       return;
     }
     sendJson(response, 200, jsonRpcError(message.id, -32601, "Method not found"));

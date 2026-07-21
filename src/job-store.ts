@@ -11,14 +11,14 @@ export type JobPhase = typeof JOB_PHASES[number];
 
 const TERMINAL_PHASES = new Set<JobPhase>(["TURN_IDLE", "BLOCKED", "MISMATCH", "TIMEOUT"]);
 const TRANSITIONS: Record<JobPhase, ReadonlySet<JobPhase>> = {
-  CREATED: new Set(["DISPATCHED", "BLOCKED", "MISMATCH", "TIMEOUT"]),
-  DISPATCHED: new Set(["USER_TURN_ACKED", "SESSION_LOST", "SEND_UNCERTAIN", "BLOCKED", "MISMATCH", "TIMEOUT"]),
-  USER_TURN_ACKED: new Set(["ASSISTANT_STARTED", "SESSION_LOST", "TIMEOUT"]),
-  ASSISTANT_STARTED: new Set(["TURN_IDLE", "SESSION_LOST", "TIMEOUT"]),
+  CREATED: new Set(["DISPATCHED", "SEND_UNCERTAIN", "BLOCKED", "MISMATCH", "TIMEOUT"]),
+  DISPATCHED: new Set(["USER_TURN_ACKED", "SESSION_LOST", "SEND_UNCERTAIN", "RECONCILING", "BLOCKED", "MISMATCH", "TIMEOUT"]),
+  USER_TURN_ACKED: new Set(["ASSISTANT_STARTED", "SESSION_LOST", "RECONCILING", "TIMEOUT"]),
+  ASSISTANT_STARTED: new Set(["TURN_IDLE", "SESSION_LOST", "RECONCILING", "TIMEOUT"]),
   TURN_IDLE: new Set(),
   SESSION_LOST: new Set(["RECONCILING", "BLOCKED", "MISMATCH", "TIMEOUT"]),
   SEND_UNCERTAIN: new Set(["RECONCILING", "BLOCKED", "MISMATCH", "TIMEOUT"]),
-  RECONCILING: new Set(["DISPATCHED", "USER_TURN_ACKED", "ASSISTANT_STARTED", "BLOCKED", "MISMATCH", "TIMEOUT"]),
+  RECONCILING: new Set(["DISPATCHED", "USER_TURN_ACKED", "ASSISTANT_STARTED", "SEND_UNCERTAIN", "BLOCKED", "MISMATCH", "TIMEOUT"]),
   BLOCKED: new Set(),
   MISMATCH: new Set(),
   TIMEOUT: new Set(),
@@ -34,6 +34,7 @@ export interface StoredJob {
   conversation_identity: string | null;
   phase: JobPhase;
   recovery_from: JobPhase | null;
+  recovery_send_used: number;
   result: "completed" | "blocked" | "timeout" | "mismatch" | null;
   error_code: string | null;
   deadline: string;
@@ -79,6 +80,7 @@ export class JobStore extends EventEmitter {
         conversation_identity TEXT,
         phase TEXT NOT NULL,
         recovery_from TEXT,
+        recovery_send_used INTEGER NOT NULL DEFAULT 0,
         result TEXT,
         error_code TEXT,
         deadline TEXT NOT NULL,
@@ -103,6 +105,7 @@ export class JobStore extends EventEmitter {
     for (const statement of [
       "ALTER TABLE jobs ADD COLUMN session_id TEXT",
       "ALTER TABLE jobs ADD COLUMN conversation_identity TEXT",
+      "ALTER TABLE jobs ADD COLUMN recovery_send_used INTEGER NOT NULL DEFAULT 0",
     ]) {
       try { this.db.exec(statement); } catch (error) {
         if (!(error instanceof Error) || !error.message.includes("duplicate column name")) throw error;
@@ -172,7 +175,7 @@ export class JobStore extends EventEmitter {
     if (!TRANSITIONS[current.phase].has(next)) {
       throw new Error(`PHASE_TRANSITION_INVALID:${current.phase}->${next}`);
     }
-    const recoveryFrom = next === "SESSION_LOST" || next === "SEND_UNCERTAIN"
+    const recoveryFrom = next === "SESSION_LOST" || next === "SEND_UNCERTAIN" || next === "RECONCILING"
       ? current.phase
       : current.recovery_from;
     const now = new Date().toISOString();
@@ -184,6 +187,14 @@ export class JobStore extends EventEmitter {
     const job = this.getJob(jobId);
     this.emit("job-transition", job);
     return job;
+  }
+
+  claimRecoverySend(jobId: string): boolean {
+    const result = this.db.prepare(`
+      UPDATE jobs SET recovery_send_used = 1, updated_at = ?
+      WHERE job_id = ? AND recovery_send_used = 0
+    `).run(new Date().toISOString(), jobId);
+    return result.changes === 1;
   }
 
   bindJobToSession(jobId: string, session: StoredSession): StoredJob {

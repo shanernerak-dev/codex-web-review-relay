@@ -18,9 +18,12 @@
         "ARM_SESSION",
         "HEARTBEAT",
         "DISPATCH_TRIGGER",
+        "RECONCILE_TRIGGER",
         "USER_TURN_ACKED",
         "ASSISTANT_STARTED",
         "TURN_IDLE",
+        "TURN_TIMEOUT",
+        "RECONCILE_MISMATCH",
         "SESSION_LOST",
         "SEND_UNCERTAIN",
         "DISARM_SESSION"
@@ -34,5 +37,6 @@
     "envelope": {"type": "string"},
     "envelopeSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "deadline": {"type": "string", "format": "date-time"}
+    ,"allowUnsentSend": {"type": "boolean"}
   }
 }

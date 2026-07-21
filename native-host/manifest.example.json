@@ -4,6 +4,6 @@
   "path": "<ABSOLUTE_PATH_TO_NATIVE_HOST_LAUNCHER>",
   "type": "stdio",
   "allowed_origins": [
-    "chrome-extension://<UNPACKED_EXTENSION_ID>/"
+    "chrome-extension://kkdijpckhlminpolkllmmkldlljakfem/"
   ]
 }

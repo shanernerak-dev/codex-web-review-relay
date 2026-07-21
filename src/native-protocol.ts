@@ -76,6 +76,8 @@ export class NativeBridge {
       USER_TURN_ACKED: "USER_TURN_ACKED",
       ASSISTANT_STARTED: "ASSISTANT_STARTED",
       TURN_IDLE: "TURN_IDLE",
+      TURN_TIMEOUT: "TIMEOUT",
+      RECONCILE_MISMATCH: "MISMATCH",
       SESSION_LOST: "SESSION_LOST",
       SEND_UNCERTAIN: "SEND_UNCERTAIN",
     } as const;
@@ -119,6 +121,31 @@ export class NativeBridge {
 
   markDispatchWritten(jobId: string): void {
     this.coordinator.transition(jobId, "DISPATCHED");
+  }
+
+  createReconcile(input: {
+    sessionId: string;
+    jobId: string;
+    fingerprint: string;
+    envelope: TriggerEnvelope;
+    deadline: string;
+    allowUnsentSend: boolean;
+  }): NativeRecord {
+    const session = this.requireSession(input.sessionId);
+    const job = this.coordinator.store.requireJobSession(input.jobId, session);
+    if (job.phase !== "RECONCILING" || job.fingerprint !== input.fingerprint) throw new Error("RECONCILE_PRECONDITION_FAILED");
+    return {
+      schemaVersion: NATIVE_SCHEMA_VERSION,
+      type: "RECONCILE_TRIGGER",
+      requestId: randomUUID(),
+      sessionId: input.sessionId,
+      jobId: input.jobId,
+      fingerprint: input.fingerprint,
+      envelope: input.envelope.text,
+      envelopeSha256: input.envelope.sha256,
+      deadline: input.deadline,
+      allowUnsentSend: input.allowUnsentSend,
+    };
   }
 
   private requireSession(sessionId: string): StoredSession {

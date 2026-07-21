@@ -11,6 +11,7 @@ export interface RelayConfig {
   helperPath: string;
   nativeHostName: string;
   extensionId: string;
+  requestDeadlineMs: number;
 }
 
 export function validateConfig(value: unknown): RelayConfig {
@@ -31,6 +32,9 @@ export function validateConfig(value: unknown): RelayConfig {
     if (typeof config[key] !== "string" || (config[key] as string).length === 0) {
       throw new Error(`CONFIG_INVALID:${key}`);
     }
+  }
+  if (!Number.isInteger(config.requestDeadlineMs) || (config.requestDeadlineMs as number) < 1_000 || (config.requestDeadlineMs as number) > 300_000) {
+    throw new Error("CONFIG_INVALID:requestDeadlineMs");
   }
   return config as unknown as RelayConfig;
 }

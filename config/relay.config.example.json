@@ -10,5 +10,6 @@
   "pythonExecutable": "python",
   "helperPath": "scripts/tools/check_stage_gate_readiness.py",
   "nativeHostName": "dev.shanernerak.codex_web_review_relay",
-  "extensionId": "<UNPACKED_EXTENSION_ID>"
+  "extensionId": "kkdijpckhlminpolkllmmkldlljakfem",
+  "requestDeadlineMs": 300000
 }

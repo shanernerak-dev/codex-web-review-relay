@@ -5,6 +5,7 @@ import { JobStore } from "./job-store.ts";
 import { NativeMessageDecoder, encodeNativeMessage } from "./native-framing.ts";
 import { NativeBridge, NATIVE_SCHEMA_VERSION } from "./native-protocol.ts";
 import { createRelayServer, listen } from "./server.ts";
+import { ReviewTransportService } from "./review-transport.ts";
 
 function configArgument(): string {
   const index = process.argv.indexOf("--config");
@@ -18,7 +19,11 @@ async function nativeHost(): Promise<void> {
   const store = new JobStore(config.stateDbPath);
   const coordinator = new JobCoordinator(store);
   const bridge = new NativeBridge(coordinator);
-  const server = createRelayServer(config, token, store);
+  const writeNative = (message: Record<string, unknown>) => {
+    process.stdout.write(encodeNativeMessage(message));
+  };
+  const transport = new ReviewTransportService(config, store, coordinator, bridge, writeNative);
+  const server = createRelayServer(config, token, store, transport);
   const address = await listen(server, config);
   process.stderr.write(`review relay listening on ${address.host}:${address.port}\n`);
   const decoder = new NativeMessageDecoder();

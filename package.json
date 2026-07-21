@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node --experimental-strip-types src/cli.ts native-host",
     "test": "node --experimental-strip-types --test test/*.test.ts",
-    "test:compat": "node --experimental-strip-types scripts/verify-compatibility.ts"
+    "test:compat": "node --experimental-strip-types scripts/verify-compatibility.ts",
+    "smoke:native": "node --experimental-strip-types scripts/smoke-native-host.ts"
   }
 }
