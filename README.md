@@ -61,6 +61,22 @@ This relay automates steps 2-3 while keeping **you in control**: you manually op
 - **Python** (for the repository-side `relay-export` helper; see Integration)
 - **Windows** (installer is PowerShell-based; Linux/macOS adaptation is straightforward but not yet scripted)
 
+### Platform and Account Dependencies
+
+The relay itself is **localhost-only transport** — it has no cloud dependency and never contacts GitHub or any remote service. However, the end-to-end review workflow has external dependencies:
+
+| Layer | Dependency | Notes |
+|-------|-----------|-------|
+| Formal verdict surface | Code hosting platform with **PR + comment** capability | GitHub is the default (trigger envelope instruction says "publish as a GitHub PR comment"). Adaptable to GitLab/Gitee by changing the fixed instruction in your helper. |
+| Reviewer reads the PR | The web reviewer (ChatGPT) must be able to **access the PR content** | Public repos: no special setup — the reviewer can read via web. Private repos: the ChatGPT account must have the **GitHub App connector** (or equivalent platform connector) bound, so the reviewer can read private diffs and post comments. |
+| Reviewer posts the verdict | Same access as above | The reviewer writes the formal verdict as a PR comment. This requires write access to the target repo's PR. |
+| Relay transport | None (localhost) | No API key, no cloud account, no network egress from the relay process. |
+
+**In short:**
+- **Open-source / public repos**: works with any platform that has PR + comment (GitHub, GitLab, Gitee, etc.). No account binding needed beyond what the reviewer already has.
+- **Private repos on GitHub**: requires the ChatGPT/GPT account to have the [GitHub App](https://chatgpt.com/gpts) connector enabled, so the web reviewer can access private PR content and publish the verdict comment.
+- **Private repos on other platforms**: requires an equivalent connector or manual access path for the reviewer.
+
 ### 1. Clone this repository
 
 ```powershell

@@ -59,6 +59,22 @@
 - **Python**（用于仓库侧的 `relay-export` helper；见"集成"章节）
 - **Windows**（安装器基于 PowerShell；Linux/macOS 适配直接但尚未脚本化）
 
+### 平台与账号依赖
+
+Relay 本身是**纯 localhost 传输**——无云端依赖，relay 进程从不联系 GitHub 或任何远程服务。但端到端评审工作流有外部依赖：
+
+| 层级 | 依赖 | 说明 |
+|------|------|------|
+| 正式结论载体 | 具备 **PR + 评论** 功能的代码托管平台 | 默认为 GitHub（trigger envelope 固定指令为"publish as a GitHub PR comment"）。如需适配 GitLab/Gitee，修改 helper 中的固定指令即可。 |
+| 评审者读取 PR | Web 评审者（ChatGPT）必须能**访问 PR 内容** | 公开仓库：无需特殊配置，评审者可通过网页读取。私有仓库：ChatGPT 账号必须绑定 **GitHub App 连接器**（或对应平台连接器），使评审者能读取私有 diff 并发布评论。 |
+| 评审者发布结论 | 同上 | 评审者将正式结论写为 PR comment，需要对目标仓库 PR 的写权限。 |
+| Relay 传输层 | 无（localhost） | 无 API key、无云端账号、relay 进程无网络出口。 |
+
+**简言之：**
+- **开源 / 公开仓库**：适用于任何具备 PR + 评论功能的平台（GitHub、GitLab、Gitee 等）。除评审者已有的访问能力外，无需额外账号绑定。
+- **GitHub 私有仓库**：需要 ChatGPT/GPT 账号启用 [GitHub App](https://chatgpt.com/gpts) 连接器，使 Web 评审者能访问私有 PR 内容并发布结论评论。
+- **其他平台的私有仓库**：需要对应的连接器或评审者的手动访问路径。
+
 ### 1. 克隆本仓库
 
 ```powershell
