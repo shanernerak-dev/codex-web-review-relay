@@ -237,7 +237,7 @@ Review scope: <what the reviewer should look at>
 <your content here>
 ```
 
-The relay does not parse the handoff body — it only hashes it. The trigger envelope sent to ChatGPT contains six dynamic fields (path, ref, head, stream, round, kind) and one fixed instruction. By default the fixed instruction asks the reviewer to publish the verdict as a GitHub PR comment; this is a convention, not a transport-layer requirement — the relay returns the reviewer's response regardless of whether a PR comment is posted.
+The relay does not parse the handoff body — it only hashes it. The trigger envelope sent to ChatGPT contains six dynamic fields (path, ref, head, stream, round, kind) and two fixed instructions: one directing the reviewer to execute the review based on pre-read context and respond in plain text, and one noting that publishing the verdict as a GitHub PR comment is optional — the relay returns the reviewer's response regardless of whether a PR comment is posted.
 
 ### Configuration
 

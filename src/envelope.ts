@@ -7,7 +7,10 @@ export interface TriggerEnvelope {
 }
 
 export const FORMAL_REVIEW_PUBLICATION_INSTRUCTION =
-  "After completing the review, publish the formal verdict as a GitHub PR comment following the repository convention.";
+  "After completing the review, publish the formal verdict as a GitHub PR comment following the repository convention (optional — returning the verdict in this conversation via the relay channel is sufficient).";
+
+export const REVIEW_EXECUTION_INSTRUCTION =
+  "请基于你的预读上下文，现在执行正式评审。请直接以纯文本形式在本对话中输出完整评审结论，不要使用工具、不要读取文件、不要使用 canvas 或 artifact。一次性输出完整结论。";
 
 export function renderTriggerEnvelope(relay: RelayExport): TriggerEnvelope {
   const text = [
@@ -17,6 +20,7 @@ export function renderTriggerEnvelope(relay: RelayExport): TriggerEnvelope {
     `Review stream: ${relay.review_stream}`,
     `Effective round: ${relay.effective_round}`,
     `Package kind: ${relay.package_kind}`,
+    REVIEW_EXECUTION_INSTRUCTION,
     FORMAL_REVIEW_PUBLICATION_INSTRUCTION,
   ].join("\n");
   return {text, sha256: sha256(text)};

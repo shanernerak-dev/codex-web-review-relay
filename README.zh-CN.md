@@ -235,7 +235,7 @@ Review scope: <评审者应关注的内容>
 <你的内容>
 ```
 
-Relay 不解析 handoff 正文——只做哈希。发送给 ChatGPT 的 trigger envelope 包含六个动态字段（path、ref、head、stream、round、kind）和一条固定指令。默认固定指令要求评审者将结论发布为 GitHub PR comment；这是约定而非传输层硬约束——无论评审者是否发布 PR comment，relay 都会返回评审者的回复。
+Relay 不解析 handoff 正文——只做哈希。发送给 ChatGPT 的 trigger envelope 包含六个动态字段（path、ref、head、stream、round、kind）和两条固定指令：一条指示评审者基于预读上下文执行评审并以纯文本回复，另一条说明将结论发布为 GitHub PR comment 是可选的——无论评审者是否发布 PR comment，relay 都会返回评审者的回复。
 
 ### 配置
 
