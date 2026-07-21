@@ -1,8 +1,8 @@
 (function () {
   "use strict";
   const adapter = globalThis.ReviewRelayDomAdapter;
-  const QUIET_IDLE_MS = 1_500;
-  const OUTPUT_STABILITY_MS = 1_500;
+  const QUIET_IDLE_MS = 30_000;
+  const OUTPUT_STABILITY_MS = 30_000;
   let active = null;
   function sendLifecycle(type, job, errorCode = null, assistantOutput = null) { return chrome.runtime.sendMessage({kind: "LIFECYCLE", type, jobId: job.jobId, errorCode, ...(assistantOutput !== null ? {assistantOutput} : {})}); }
   function requireLiveDeadline(message) { if (!Number.isFinite(Date.parse(message.deadline)) || Date.now() >= Date.parse(message.deadline)) throw new Error("MESSAGE_DEADLINE_EXPIRED"); }
