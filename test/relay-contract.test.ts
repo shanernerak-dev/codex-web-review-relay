@@ -23,6 +23,14 @@ test("relay export fails closed on unknown major and scope drift", () => {
   );
 });
 
+test("accepts attended review rounds beyond the unattended five-round budget", () => {
+  const relay = validateRelayExport(relayFixture({
+    effective_round: 6,
+    handoff_path: ".agent/review_handoffs/pr-41/stage-c-runtime-followup/round-06-evidence-amendment.md",
+  }));
+  assert.equal(relay.effective_round, 6);
+});
+
 test("fingerprint and six locator fields plus fixed publication instruction are deterministic", () => {
   const relay = validateRelayExport(relayFixture());
   assert.equal(relayFingerprint(relay), relayFingerprint({...relay}));
