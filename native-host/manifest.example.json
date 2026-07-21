@@ -1,0 +1,9 @@
+{
+  "name": "dev.shanernerak.codex_web_review_relay",
+  "description": "Codex Web Review Relay native messaging host",
+  "path": "<ABSOLUTE_PATH_TO_NATIVE_HOST_LAUNCHER>",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://kkdijpckhlminpolkllmmkldlljakfem/"
+  ]
+}

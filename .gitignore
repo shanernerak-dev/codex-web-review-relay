@@ -1,0 +1,8 @@
+node_modules/
+.relay-state/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+coverage/
+.env
+reference/

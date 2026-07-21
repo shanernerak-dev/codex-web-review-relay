@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema_version": {"major": 1, "minor": 0},
+  "mcp_protocol_version": "2025-11-25",
+  "tools": [
+    {
+      "name": "request_review",
+      "description": "Create or resume one persisted review transport job from a canonical tracked handoff.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["handoff_path"],
+        "properties": {
+          "handoff_path": {
+            "type": "string",
+            "pattern": "^\\.agent/review_handoffs/pr-[1-9][0-9]*/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"
+          }
+        }
+      }
+    },
+    {
+      "name": "recover_review",
+      "description": "Authorize one audited recovery reconcile for a terminal MISMATCH job after confirming that the original user turn was not sent.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["handoff_path", "confirm_unsent"],
+        "properties": {
+          "handoff_path": {
+            "type": "string",
+            "pattern": "^\\.agent/review_handoffs/pr-[1-9][0-9]*/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"
+          },
+          "confirm_unsent": {"const": true}
+        }
+      }
+    },
+    {
+      "name": "get_review_transport_status",
+      "description": "Read a persisted transport job by exactly one stable lookup key.",
+      "inputSchema": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["job_id"],
+            "properties": {"job_id": {"type": "string", "format": "uuid"}}
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["handoff_path"],
+            "properties": {"handoff_path": {"type": "string", "minLength": 1}}
+          }
+        ]
+      }
+    }
+  ]
+}

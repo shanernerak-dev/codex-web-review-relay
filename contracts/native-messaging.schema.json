@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema_version": {"major": 1, "minor": 0},
+  "consumer_support": {"major": 1, "min_minor": 0, "max_minor": 0},
+  "type": "object",
+  "required": ["schemaVersion", "type"],
+  "properties": {
+    "schemaVersion": {
+      "type": "object",
+      "required": ["major", "minor"],
+      "properties": {
+        "major": {"const": 1},
+        "minor": {"type": "integer", "minimum": 0, "maximum": 0}
+      }
+    },
+    "type": {
+      "enum": [
+        "ARM_SESSION",
+        "HEARTBEAT",
+        "DISPATCH_TRIGGER",
+        "RECONCILE_TRIGGER",
+        "USER_TURN_ACKED",
+        "ASSISTANT_STARTED",
+        "TURN_IDLE",
+        "TURN_TIMEOUT",
+        "RECONCILE_MISMATCH",
+        "SESSION_LOST",
+        "SEND_UNCERTAIN",
+        "DISARM_SESSION"
+      ]
+    },
+    "requestId": {"type": "string", "minLength": 1},
+    "responseToRequestId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "jobId": {"type": "string", "format": "uuid"},
+    "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "envelope": {"type": "string"},
+    "envelopeSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "deadline": {"type": "string", "format": "date-time"},
+    "allowUnsentSend": {"type": "boolean"},
+    "errorCode": {"type": "string", "minLength": 1},
+    "assistantOutput": {"type": "string", "minLength": 1, "maxLength": 131072}
+  }
+}

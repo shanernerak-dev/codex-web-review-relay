@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema_version": {"major": 1, "minor": 0},
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "job_id",
+    "fingerprint",
+    "handoff_path",
+    "handoff_sha256",
+    "reviewed_head",
+    "session_id",
+    "phase",
+    "deadline",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "job_id": {"type": "string", "format": "uuid"},
+    "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "handoff_path": {"type": "string", "minLength": 1},
+    "handoff_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "reviewed_head": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "session_id": {"type": ["string", "null"]},
+    "phase": {
+      "enum": [
+        "CREATED",
+        "DISPATCHED",
+        "USER_TURN_ACKED",
+        "ASSISTANT_STARTED",
+        "TURN_IDLE",
+        "SESSION_LOST",
+        "SEND_UNCERTAIN",
+        "RECONCILING",
+        "BLOCKED",
+        "MISMATCH",
+        "TIMEOUT"
+      ]
+    },
+    "result": {"enum": ["completed", "blocked", "timeout", "mismatch", null]},
+    "error_code": {"type": ["string", "null"]},
+    "assistant_output": {"type": ["string", "null"], "maxLength": 131072},
+    "assistant_output_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "deadline": {"type": "string", "format": "date-time"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"}
+  }
+}
