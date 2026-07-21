@@ -100,6 +100,10 @@
     return clickAndConfirm(document, {baseline, input}, envelope);
   }
   function isGenerating(document) { return document.querySelectorAll(STOP_SELECTOR).length === 1; }
-  function isIdle(document) { return document.querySelectorAll(STOP_SELECTOR).length === 0 && document.querySelectorAll(SEND_SELECTOR).length === 1; }
+  function isIdle(document) {
+    if (document.querySelectorAll(STOP_SELECTOR).length !== 0) return false;
+    try { composer(document); return true; }
+    catch { return false; }
+  }
   scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, writeComposer, snapshotTurns, newTurn, turns, dispatch, reconcile, resumeDraft, isGenerating, isIdle};
 })(globalThis);

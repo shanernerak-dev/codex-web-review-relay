@@ -129,7 +129,8 @@ test("DOM adapter matches only new exact user turn then assistant idle", () => {
   const newUser = node({role: "user", innerText: "envelope"});
   const assistant = node({role: "assistant", innerText: "working"});
   const send = node();
-  const map = new Map<string, NodeLike[]>([["[data-message-author-role]", [oldUser]], ["[data-testid='send-button']", [send]], ["[data-testid='stop-button']", []]]);
+  const input = node({value: ""});
+  const map = new Map<string, NodeLike[]>([["#prompt-textarea", [input]], ["[contenteditable='true'][data-lexical-editor='true']", []], ["[data-message-author-role]", [oldUser]], ["[data-testid='send-button']", [send]], ["[data-testid='stop-button']", []]]);
   const document = fakeDocument(map);
   const baseline = adapter.snapshotTurns(document);
   map.set("[data-message-author-role]", [oldUser, newUser, assistant]);
@@ -138,6 +139,20 @@ test("DOM adapter matches only new exact user turn then assistant idle", () => {
   assert.equal(adapter.isIdle(document), true);
   map.set("[data-testid='stop-button']", [node()]);
   assert.equal(adapter.isGenerating(document), true);
+  assert.equal(adapter.isIdle(document), false);
+});
+
+test("DOM adapter recognizes completed turns when the empty composer has no send button", () => {
+  const input = node({value: ""});
+  const map = new Map<string, NodeLike[]>([
+    ["#prompt-textarea", [input]],
+    ["[contenteditable='true'][data-lexical-editor='true']", []],
+    ["[data-testid='send-button']", []],
+    ["[data-testid='stop-button']", []],
+  ]);
+  const document = fakeDocument(map);
+  assert.equal(adapter.isIdle(document), true);
+  map.set("[data-testid='stop-button']", [node()]);
   assert.equal(adapter.isIdle(document), false);
 });
 
