@@ -38,11 +38,21 @@ function lifecycle(bridge: NativeBridge, type: string, jobId: string): void {
   });
 }
 
+function acceptOutbound(bridge: NativeBridge, message: Record<string, unknown>): void {
+  bridge.handleInbound({
+    schemaVersion: NATIVE_SCHEMA_VERSION,
+    type: `${message.type}_ACCEPTED`,
+    responseToRequestId: message.requestId,
+    sessionId: message.sessionId,
+    jobId: message.jobId,
+  });
+}
+
 test("request_review dispatches once and concurrent retry shares the persisted job", async () => {
   const {root, store, coordinator, bridge} = fixture();
   const dispatches: Record<string, unknown>[] = [];
   const service = new ReviewTransportService(
-    config(root), store, coordinator, bridge, (message) => dispatches.push(message),
+    config(root), store, coordinator, bridge, (message) => { dispatches.push(message); setImmediate(() => acceptOutbound(bridge, message)); },
     async () => relayFixture(),
   );
   try {
@@ -84,7 +94,7 @@ test("dispatch write failure is persisted and retry performs reconciliation with
   const service = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => {
     if (message.type === "DISPATCH_TRIGGER") { writes += 1; throw new Error("write failed"); }
     assert.equal(message.type, "RECONCILE_TRIGGER");
-    setImmediate(() => lifecycle(bridge, "RECONCILE_MISMATCH", message.jobId as string));
+    setImmediate(() => { acceptOutbound(bridge, message); lifecycle(bridge, "RECONCILE_MISMATCH", message.jobId as string); });
   }, async () => relayFixture());
   try {
     await assert.rejects(service.requestReview(relayFixture().handoff_path), /write failed/);
@@ -98,7 +108,7 @@ test("dispatch write failure is persisted and retry performs reconciliation with
 test("bounded wait persists timeout and path lookup rejects drift", async () => {
   const {root, store, coordinator, bridge} = fixture();
   let relay = relayFixture();
-  const service = new ReviewTransportService(config(root, 15), store, coordinator, bridge, () => {}, async () => relay);
+  const service = new ReviewTransportService(config(root, 15), store, coordinator, bridge, (message) => setImmediate(() => acceptOutbound(bridge, message)), async () => relay);
   try {
     const timedOut = await service.requestReview(relay.handoff_path);
     assert.equal(timedOut.phase, "TIMEOUT");
@@ -112,7 +122,7 @@ test("bounded wait persists timeout and path lookup rejects drift", async () => 
 test("restart reconciles instead of issuing a second dispatch and permits at most one recovery send", async () => {
   const {root, store, coordinator, bridge} = fixture();
   const firstWrites: Record<string, unknown>[] = [];
-  const firstService = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => firstWrites.push(message), async () => relayFixture());
+  const firstService = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => { firstWrites.push(message); setImmediate(() => acceptOutbound(bridge, message)); }, async () => relayFixture());
   try {
     const original = firstService.requestReview(relayFixture().handoff_path);
     await new Promise((resolve) => setImmediate(resolve));
@@ -120,7 +130,7 @@ test("restart reconciles instead of issuing a second dispatch and permits at mos
     const jobId = firstWrites[0].jobId as string;
 
     const recoveryWrites: Record<string, unknown>[] = [];
-    const restarted = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => recoveryWrites.push(message), async () => relayFixture());
+    const restarted = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => { recoveryWrites.push(message); setImmediate(() => acceptOutbound(bridge, message)); }, async () => relayFixture());
     const recovered = restarted.requestReview(relayFixture().handoff_path);
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(recoveryWrites[0].type, "RECONCILE_TRIGGER");
@@ -128,7 +138,7 @@ test("restart reconciles instead of issuing a second dispatch and permits at mos
     assert.equal(firstWrites.length, 1);
 
     const secondRecoveryWrites: Record<string, unknown>[] = [];
-    const restartedAgain = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => secondRecoveryWrites.push(message), async () => relayFixture());
+    const restartedAgain = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => { secondRecoveryWrites.push(message); setImmediate(() => acceptOutbound(bridge, message)); }, async () => relayFixture());
     const recoveredAgain = restartedAgain.requestReview(relayFixture().handoff_path);
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(secondRecoveryWrites[0].type, "RECONCILE_TRIGGER");

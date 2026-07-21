@@ -58,7 +58,7 @@ export function createRelayServer(
   }
   if (bearerToken.length < 32) throw new Error("BEARER_TOKEN_TOO_SHORT");
 
-  return createServer(async (request, response) => {
+  const server = createServer(async (request, response) => {
     if (!isLoopback(request.socket.remoteAddress)) {
       sendJson(response, 403, {error: "REMOTE_ADDRESS_FORBIDDEN"});
       return;
@@ -92,12 +92,12 @@ export function createRelayServer(
       return;
     }
     if (request.method === "GET") {
-      response.writeHead(405, {allow: "POST, GET"});
+      response.writeHead(405, {allow: "POST"});
       response.end();
       return;
     }
     if (request.method !== "POST") {
-      response.writeHead(405, {allow: "POST, GET"});
+      response.writeHead(405, {allow: "POST"});
       response.end();
       return;
     }
@@ -190,6 +190,10 @@ export function createRelayServer(
     }
     sendJson(response, 200, jsonRpcError(message.id, -32601, "Method not found"));
   });
+  server.headersTimeout = 10_000;
+  server.requestTimeout = 310_000;
+  server.keepAliveTimeout = 5_000;
+  return server;
 }
 
 export async function listen(server: Server, config: RelayConfig): Promise<{host: string; port: number}> {

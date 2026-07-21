@@ -14,6 +14,7 @@ type NodeLike = {
   focus(): void;
   dispatchEvent(): void;
   click(): void;
+  getClientRects?(): ArrayLike<unknown>;
 };
 
 function node(input: Partial<NodeLike> = {}): NodeLike {
@@ -89,4 +90,22 @@ test("DOM adapter reconciles existing user turn or one exact unsent draft", () =
   assert.equal(send.clicked, 1);
   input.value = "different";
   assert.equal(adapter.reconcile(document, "envelope").state, "missing");
+});
+
+test("DOM adapter ignores hidden duplicate controls but rejects two visible controls", () => {
+  const visibleInput = node({value: "", getClientRects: () => [{}]});
+  const hiddenInput = node({value: "", getClientRects: () => []});
+  const visibleSend = node({getClientRects: () => [{}]});
+  const hiddenSend = node({getClientRects: () => []});
+  const map = new Map<string, NodeLike[]>([
+    ["#prompt-textarea", [visibleInput, hiddenInput]],
+    ["[contenteditable='true'][data-lexical-editor='true']", []],
+    ["[data-testid='send-button']", [visibleSend, hiddenSend]],
+    ["[data-message-author-role]", []],
+  ]);
+  const document = fakeDocument(map);
+  adapter.dispatch(document, "envelope");
+  assert.equal(visibleInput.value, "envelope");
+  map.set("#prompt-textarea", [visibleInput, node({value: "", getClientRects: () => [{}]})]);
+  assert.throws(() => adapter.composer(document), /COMPOSER_IDENTITY_MISMATCH/);
 });

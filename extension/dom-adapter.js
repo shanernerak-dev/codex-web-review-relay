@@ -8,8 +8,13 @@
   function unique(document, selectors, code) {
     const nodes = [];
     for (const selector of selectors) for (const node of document.querySelectorAll(selector)) if (!nodes.includes(node)) nodes.push(node);
-    if (nodes.length !== 1) throw new Error(`${code}:${nodes.length}`);
-    return nodes[0];
+    const visible = nodes.filter((node) => {
+      if (typeof node.getClientRects === "function") return node.getClientRects().length > 0;
+      if (typeof node.getBoundingClientRect === "function") { const rect = node.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; }
+      return true;
+    });
+    if (visible.length !== 1) throw new Error(`${code}:${visible.length}`);
+    return visible[0];
   }
   function conversationIdentity(location) {
     if (location.origin !== "https://chatgpt.com" || !/(^|\/)c\/[0-9a-z-]+(?:$|\/)/i.test(location.pathname)) throw new Error("PAGE_IDENTITY_UNSUPPORTED");

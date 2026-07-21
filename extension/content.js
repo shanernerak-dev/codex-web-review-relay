@@ -8,16 +8,35 @@
     const job = {jobId: message.jobId, deadline: Date.parse(message.deadline)};
     active = job;
     let settled = false;
-    const finish = () => { if (settled) return; settled = true; observer.disconnect(); clearInterval(timer); active = null; };
+    let inspectRunning = false;
+    let inspectPending = false;
+    let observedGenerating = false;
+    let assistantStartedAt = 0;
+    let lastMutationAt = Date.now();
+    let quietTimer = null;
+    const finish = () => { if (settled) return; settled = true; observer.disconnect(); clearInterval(timer); if (quietTimer !== null) clearTimeout(quietTimer); active = null; };
     const inspect = async () => {
       if (settled) return;
+      if (inspectRunning) { inspectPending = true; return; }
+      inspectRunning = true;
       try {
-        if (!userAcked && adapter.newTurn(document, state.baseline, "user", message.envelope)) { userAcked = true; await sendLifecycle("USER_TURN_ACKED", job); }
-        if (userAcked && !assistantStarted && adapter.newTurn(document, state.baseline, "assistant")) { assistantStarted = true; await sendLifecycle("ASSISTANT_STARTED", job); }
-        if (assistantStarted && adapter.isIdle(document)) { await sendLifecycle("TURN_IDLE", job); finish(); }
+        do {
+          inspectPending = false;
+          if (!userAcked && adapter.newTurn(document, state.baseline, "user", message.envelope)) { await sendLifecycle("USER_TURN_ACKED", job); userAcked = true; }
+          if (userAcked && !assistantStarted && adapter.newTurn(document, state.baseline, "assistant")) { await sendLifecycle("ASSISTANT_STARTED", job); assistantStarted = true; assistantStartedAt = Date.now(); }
+          if (assistantStarted && adapter.isGenerating(document)) observedGenerating = true;
+          const quiet = Date.now() - Math.max(lastMutationAt, assistantStartedAt) >= 750;
+          if (assistantStarted && !adapter.isGenerating(document) && adapter.isIdle(document) && quiet) { await sendLifecycle("TURN_IDLE", job); finish(); }
+        } while (inspectPending && !settled);
       } catch { await sendLifecycle(userAcked ? "SESSION_LOST" : "SEND_UNCERTAIN", job); finish(); }
+      finally { inspectRunning = false; }
     };
-    const observer = new MutationObserver(() => { void inspect(); });
+    const observer = new MutationObserver(() => {
+      lastMutationAt = Date.now();
+      if (quietTimer !== null) clearTimeout(quietTimer);
+      quietTimer = setTimeout(() => { void inspect(); }, 775);
+      void inspect();
+    });
     observer.observe(document.documentElement, {childList: true, subtree: true, characterData: true});
     const timer = setInterval(() => {
       if (Date.now() < job.deadline || settled) return;

@@ -48,6 +48,7 @@ export class ReviewTransportService {
   readonly exportRelay: RelayExporter;
   readonly ownedJobs = new Set<string>();
   readonly reconciledJobs = new Set<string>();
+  readonly inFlight = new Map<string, Promise<TransportStatus>>();
 
   constructor(
     config: RelayConfig,
@@ -65,9 +66,25 @@ export class ReviewTransportService {
     this.exportRelay = exportRelay;
   }
 
+  private markSendUncertain(jobId: string, errorCode: string): void {
+    const current = this.store.getJob(jobId);
+    if (current.phase === "SEND_UNCERTAIN") return;
+    if (["TURN_IDLE", "BLOCKED", "MISMATCH", "TIMEOUT"].includes(current.phase)) return;
+    this.coordinator.transition(jobId, "SEND_UNCERTAIN", errorCode);
+  }
+
   async requestReview(handoffPath: string): Promise<TransportStatus> {
     const relay = await this.exportRelay(this.config, handoffPath);
     const fingerprint = relayFingerprint(relay);
+    const existing = this.inFlight.get(fingerprint);
+    if (existing) return existing;
+    const operation = this.requestReviewResolved(relay, fingerprint);
+    this.inFlight.set(fingerprint, operation);
+    try { return await operation; }
+    finally { if (this.inFlight.get(fingerprint) === operation) this.inFlight.delete(fingerprint); }
+  }
+
+  private async requestReviewResolved(relay: RelayExport, fingerprint: string): Promise<TransportStatus> {
     const session = this.store.getActiveSession();
     if (!session) throw new Error("SESSION_NOT_ARMED");
 
@@ -86,12 +103,16 @@ export class ReviewTransportService {
         envelope: renderTriggerEnvelope(relay),
         deadline: current.deadline,
       });
+      const accepted = this.bridge.expectOutboundAck(dispatch);
       try {
-        this.writeDispatch(dispatch);
         this.bridge.markDispatchWritten(current.job_id);
+        this.writeDispatch(dispatch);
+        await accepted;
         this.ownedJobs.add(current.job_id);
       } catch (error) {
-        this.coordinator.transition(current.job_id, "SEND_UNCERTAIN", "NATIVE_DISPATCH_WRITE_FAILED");
+        this.bridge.cancelOutboundAck(dispatch, "NATIVE_DISPATCH_WRITE_FAILED");
+        await accepted.catch(() => {});
+        this.markSendUncertain(current.job_id, "NATIVE_DISPATCH_WRITE_FAILED");
         throw error;
       }
       current = this.store.getJob(current.job_id);
@@ -112,11 +133,15 @@ export class ReviewTransportService {
         deadline: current.deadline,
         allowUnsentSend: this.store.claimRecoverySend(current.job_id),
       });
+      const accepted = this.bridge.expectOutboundAck(reconcile);
       try {
         this.writeDispatch(reconcile);
+        await accepted;
         this.reconciledJobs.add(current.job_id);
       } catch (error) {
-        this.coordinator.transition(current.job_id, "SEND_UNCERTAIN", "RECONCILE_WRITE_FAILED");
+        this.bridge.cancelOutboundAck(reconcile, "RECONCILE_WRITE_FAILED");
+        await accepted.catch(() => {});
+        this.markSendUncertain(current.job_id, "RECONCILE_WRITE_FAILED");
         throw error;
       }
       current = this.store.getJob(current.job_id);

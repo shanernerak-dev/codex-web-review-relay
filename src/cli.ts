@@ -24,28 +24,50 @@ async function nativeHost(): Promise<void> {
   };
   const transport = new ReviewTransportService(config, store, coordinator, bridge, writeNative);
   const server = createRelayServer(config, token, store, transport);
-  const address = await listen(server, config);
-  process.stderr.write(`review relay listening on ${address.host}:${address.port}\n`);
+  let listenPromise: Promise<void> | null = null;
+  const ensureListening = () => {
+    if (!listenPromise) listenPromise = listen(server, config).then((address) => {
+      process.stderr.write(`review relay listening on ${address.host}:${address.port}\n`);
+    });
+    return listenPromise;
+  };
   const decoder = new NativeMessageDecoder();
-  process.stdin.on("data", (chunk: Buffer) => {
+  let inbound = Promise.resolve();
+  const handleMessage = async (message: unknown) => {
+    const record = message !== null && typeof message === "object" && !Array.isArray(message) ? message as Record<string, unknown> : {};
     try {
-      for (const message of decoder.push(chunk)) {
-        process.stdout.write(encodeNativeMessage(bridge.handleInbound(message)));
-      }
+      const response = bridge.handleInbound(message);
+      if (record.type === "ARM_SESSION") await ensureListening();
+      if (response) writeNative(response);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "NATIVE_HOST_ERROR";
-      process.stdout.write(encodeNativeMessage({
+      const detail = error instanceof Error ? error.message : "NATIVE_HOST_ERROR";
+      if (record.type === "ARM_SESSION" && typeof record.sessionId === "string") store.disarmSession(record.sessionId);
+      writeNative({
         schemaVersion: NATIVE_SCHEMA_VERSION,
         type: "ERROR",
-        errorCode: message.split(":", 1)[0],
-        message,
-      }));
+        responseToRequestId: typeof record.requestId === "string" ? record.requestId : undefined,
+        errorCode: detail.split(":", 1)[0],
+        message: detail,
+      });
+    }
+  };
+  process.stdin.on("data", (chunk: Buffer) => {
+    try {
+      for (const message of decoder.push(chunk)) inbound = inbound.then(() => handleMessage(message));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "NATIVE_HOST_ERROR";
+      writeNative({
+        schemaVersion: NATIVE_SCHEMA_VERSION,
+        type: "ERROR",
+        errorCode: detail.split(":", 1)[0],
+        message: detail,
+      });
     }
   });
-  const shutdown = () => server.close(() => {
-    store.close();
-    process.exit(0);
-  });
+  const shutdown = () => {
+    const finish = () => { store.close(); process.exit(0); };
+    if (server.listening) server.close(finish); else finish();
+  };
   process.stdin.once("end", shutdown);
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);

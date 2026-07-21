@@ -2,6 +2,8 @@
 
 Issue #40 的本地 MCP review relay companion repository。Stage B 提供 host/contract core；Stage C 增加 manually armed Manifest V3 extension、ChatGPT DOM adapter、真实 `request_review(handoff_path)`、status lookup 与 fail-closed reconciliation。Transport `TURN_IDLE` 不代表 formal verdict；Repo Agent 仍需独立执行 GitHub readback。
 
+Stage C 的第三方结构对照、license boundary 与采用/延期结论见 `docs/reference-architecture-audit.md`。本地 `reference/` 仅保存通过 ZIP 下载的 ignored audit snapshot，不进入 Git。
+
 Canonical GitHub repository 为 `shanernerak-dev/codex-web-review-relay`，visibility 为 `PUBLIC`。现有本机 checkout 目录 `C:\coding_projet\single-crystal-review-relay` 是 bootstrap 时形成的 user-local historical path，不属于产品 identity。`private: true` 仅用于阻止意外发布 npm package，不表示 GitHub repository visibility。
 
 Native host 采用单进程 topology：Chrome 启动的 `native-host` 同时持有唯一 `JobStore` / `JobCoordinator` / `NativeBridge` 并启动 localhost MCP server，进程内 event-driven wait 不跨进程共享。

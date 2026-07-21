@@ -156,3 +156,44 @@ test("lifecycle event must match persisted job session and conversation binding"
   store.close();
   rmSync(root, {recursive: true, force: true});
 });
+
+test("native bridge requires correlated dispatch acceptance and tolerates duplicate acknowledgements", async () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-ack-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const bridge = new NativeBridge(new JobCoordinator(store), 60_000);
+  const relay = relayFixture();
+  const fingerprint = relayFingerprint(relay);
+  const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm", sessionId: "session-1", conversationIdentity: "conversation-1", extensionVersion: "0.1.0"});
+  const dispatch = bridge.createDispatch({sessionId: "session-1", jobId: job.job_id, fingerprint, envelope: renderTriggerEnvelope(relay), deadline: job.deadline});
+  const accepted = bridge.expectOutboundAck(dispatch, 100);
+  const acknowledgement = {
+    schemaVersion: NATIVE_SCHEMA_VERSION,
+    type: "DISPATCH_TRIGGER_ACCEPTED",
+    responseToRequestId: dispatch.requestId,
+    sessionId: "session-1",
+    jobId: job.job_id,
+  };
+  assert.equal(bridge.handleInbound(acknowledgement), null);
+  await accepted;
+  assert.equal(bridge.handleInbound(acknowledgement), null);
+
+  bridge.markDispatchWritten(job.job_id);
+  const event = {schemaVersion: NATIVE_SCHEMA_VERSION, type: "USER_TURN_ACKED", requestId: "user-event", sessionId: "session-1", jobId: job.job_id};
+  assert.equal(bridge.handleInbound(event)?.phase, "USER_TURN_ACKED");
+  assert.equal(bridge.handleInbound({...event, requestId: "user-event-retry"})?.phase, "USER_TURN_ACKED");
+  store.close(); rmSync(root, {recursive: true, force: true});
+});
+
+test("native bridge fails a dropped dispatch acknowledgement within the bound", async () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-ack-timeout-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const bridge = new NativeBridge(new JobCoordinator(store), 60_000);
+  const relay = relayFixture();
+  const fingerprint = relayFingerprint(relay);
+  const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm", sessionId: "session-1", conversationIdentity: "conversation-1", extensionVersion: "0.1.0"});
+  const dispatch = bridge.createDispatch({sessionId: "session-1", jobId: job.job_id, fingerprint, envelope: renderTriggerEnvelope(relay), deadline: job.deadline});
+  await assert.rejects(bridge.expectOutboundAck(dispatch, 5), /NATIVE_OUTBOUND_ACK_TIMEOUT/);
+  store.close(); rmSync(root, {recursive: true, force: true});
+});
