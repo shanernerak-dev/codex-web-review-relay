@@ -1,6 +1,14 @@
 # Codex Web Review Relay
 
+<div align="right">
+
+[English](README.md) | [中文](README.zh-CN.md)
+
+</div>
+
 A localhost-only MCP server + Chrome extension that lets a coding agent (Codex, or any MCP client) **trigger a formal code review in a ChatGPT conversation with one tool call**, then wait for the result — no manual copy-paste, no browser automation framework, no API key for the reviewer model.
+
+> 本地 MCP 服务器 + Chrome 扩展：让编码 Agent（Codex 或任何 MCP 客户端）**一次工具调用即可触发 ChatGPT 对话中的正式代码评审**并等待结果——无需手动复制粘贴、无需浏览器自动化框架、无需评审模型的 API key。[完整中文文档 →](README.zh-CN.md)
 
 ## Why
 
