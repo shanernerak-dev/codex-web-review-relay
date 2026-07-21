@@ -48,7 +48,7 @@ export function validateRelayExport(value: unknown): RelayExport {
   if (!Number.isInteger(record.target_pr) || (record.target_pr as number) < 1) {
     throw new Error("RELAY_EXPORT_INVALID:target_pr");
   }
-  requireString(record, "handoff_path", /^\.agent\/review_handoffs\/pr-[1-9]\d*\/[a-z0-9][a-z0-9-]*\/round-0*[1-9]\d*-(review-request|review-fix|evidence-amendment|human-decision)\.md$/);
+  requireString(record, "handoff_path", /^\.agent\/review_handoffs\/pr-[1-9]\d*\/[a-z0-9][a-z0-9-]*\/round-(?:0[1-9]|[1-9]\d+)-(review-request|review-fix|evidence-amendment|human-decision)\.md$/);
   requireString(record, "handoff_sha256", /^[0-9a-f]{64}$/);
   requireString(record, "full_ref", /^refs\/heads\/[A-Za-z0-9._/-]+$/);
   requireString(record, "reviewed_head", /^[0-9a-f]{40}$/);
