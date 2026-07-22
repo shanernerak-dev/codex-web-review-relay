@@ -4,7 +4,12 @@
   const QUIET_IDLE_MS = 30_000;
   const OUTPUT_STABILITY_MS = 30_000;
   let active = null;
-  function sendLifecycle(type, job, errorCode = null, assistantOutput = null) { return chrome.runtime.sendMessage({kind: "LIFECYCLE", type, jobId: job.jobId, errorCode, ...(assistantOutput !== null ? {assistantOutput} : {})}); }
+  function sendLifecycle(type, job, errorCode = null, assistantOutput = null) {
+    return Promise.race([
+      chrome.runtime.sendMessage({kind: "LIFECYCLE", type, jobId: job.jobId, errorCode, ...(assistantOutput !== null ? {assistantOutput} : {})}),
+      new Promise((resolve) => setTimeout(() => resolve({ok: false, error: "LIFECYCLE_SEND_TIMEOUT"}), 5_000)),
+    ]);
+  }
   function requireLiveDeadline(message) { if (!Number.isFinite(Date.parse(message.deadline)) || Date.now() >= Date.parse(message.deadline)) throw new Error("MESSAGE_DEADLINE_EXPIRED"); }
 
   function monitor(message, state, userAcked = false, assistantStarted = false) {
