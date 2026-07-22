@@ -12,6 +12,12 @@ let reconnectTimer = null;
 let reconnectAttempts = 0;
 let reconnectDisabled = false;
 let restorePromise = null;
+let sessionOperation = Promise.resolve();
+function enqueueSessionOperation(operation) {
+  const next = sessionOperation.then(operation, operation);
+  sessionOperation = next.catch(() => {});
+  return next;
+}
 const pending = new Map();
 function uuid() { return crypto.randomUUID(); }
 function reconnectDelay(attempt) { return Math.min(8_000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 125); }
@@ -90,39 +96,51 @@ function scheduleReconnect() {
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     const snapshot = {...armed, manualArm: true};
-    rearmSaved(snapshot).catch((error) => { if (armed) armed.lastError = error.message; try { port?.disconnect(); } catch {} port = null; scheduleReconnect(); });
+    enqueueSessionOperation(() => rearmSaved(snapshot)).catch((error) => { if (armed) armed.lastError = error.message; try { port?.disconnect(); } catch {} port = null; scheduleReconnect(); });
   }, delay);
 }
 async function restoreSavedSession() {
   if (restorePromise) return restorePromise;
-  restorePromise = (async () => {
+  restorePromise = enqueueSessionOperation(async () => {
     const saved = (await chrome.storage.local.get(SESSION_KEY))[SESSION_KEY];
     if (!saved?.manualArm) return;
     armed = {...saved, activeJobId: saved.activeJobId ?? null, bindingValid: true, connection: "reconnecting", lastError: null};
     try { await rearmSaved(saved); }
     catch (error) { armed.lastError = error.message; if (error.message === "MANUAL_REARM_REQUIRED") { armed.connection = "failed"; reconnectDisabled = true; } else scheduleReconnect(); }
-  })();
+  });
   return restorePromise;
 }
 async function arm() {
-  const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
-  if (!tab?.id || !tab.url?.startsWith("https://chatgpt.com/")) throw new Error("ACTIVE_TAB_NOT_CHATGPT");
-  const state = await chrome.tabs.sendMessage(tab.id, {kind: "GET_PAGE_STATE"});
-  if (!state?.ok || !state.adapterReady) throw new Error(state?.errorCode ?? "PAGE_ADAPTER_NOT_READY");
-  const saved = (await chrome.storage.local.get(SESSION_KEY))[SESSION_KEY];
-  const sessionId = saved?.tabId === tab.id && saved?.expiresAt > Date.now() ? saved.sessionId : uuid();
-  reconnectDisabled = false;
-  const result = await nativeRequest("ARM_SESSION", {sessionId, extensionVersion: EXTENSION_VERSION, capabilities: CAPABILITIES});
-  armed = {sessionId, tabId: tab.id, activeJobId: null, manualArm: true, bindingValid: true, connection: "connected", lastError: null, expiresAt: Date.now() + 1_800_000};
-  reconnectAttempts = 0; startHeartbeat();
-  await chrome.storage.local.set({[SESSION_KEY]: armed});
-  return {sessionId, tabId: tab.id, leaseExpiresAt: result.leaseExpiresAt};
+  return enqueueSessionOperation(async () => {
+    const [tab] = await chrome.tabs.query({active: true, currentWindow: true});
+    if (!tab?.id || !tab.url?.startsWith("https://chatgpt.com/")) throw new Error("ACTIVE_TAB_NOT_CHATGPT");
+    const state = await chrome.tabs.sendMessage(tab.id, {kind: "GET_PAGE_STATE"});
+    if (!state?.ok || !state.adapterReady) throw new Error(state?.errorCode ?? "PAGE_ADAPTER_NOT_READY");
+    const saved = (await chrome.storage.local.get(SESSION_KEY))[SESSION_KEY];
+    const sessionId = saved?.tabId === tab.id && saved?.expiresAt > Date.now() ? saved.sessionId : uuid();
+    reconnectDisabled = false;
+    const result = await nativeRequest("ARM_SESSION", {sessionId, extensionVersion: EXTENSION_VERSION, capabilities: CAPABILITIES});
+    armed = {sessionId, tabId: tab.id, activeJobId: null, manualArm: true, bindingValid: true, connection: "connected", lastError: null, expiresAt: Date.now() + 1_800_000};
+    reconnectAttempts = 0; startHeartbeat();
+    await chrome.storage.local.set({[SESSION_KEY]: armed});
+    return {sessionId, tabId: tab.id, leaseExpiresAt: result.leaseExpiresAt};
+  });
 }
 async function disarm() {
-  reconnectDisabled = true; if (reconnectTimer !== null) clearTimeout(reconnectTimer); reconnectTimer = null; clearHeartbeat();
-  const current = armed; armed = null; await chrome.storage.local.remove(SESSION_KEY);
-  if (current && port) await nativeRequest("DISARM_SESSION", {sessionId: current.sessionId}).catch(() => {});
-  port?.disconnect(); port = null; rejectPending(new Error("SESSION_DISARMED")); return {armed: false};
+  return enqueueSessionOperation(async () => {
+    reconnectDisabled = true; if (reconnectTimer !== null) clearTimeout(reconnectTimer); reconnectTimer = null; clearHeartbeat();
+    const saved = (await chrome.storage.local.get(SESSION_KEY))[SESSION_KEY];
+    const current = armed ?? saved ?? null;
+    armed = null; await chrome.storage.local.remove(SESSION_KEY);
+    let disarmError = null;
+    if (current?.sessionId) {
+      try { await nativeRequest("DISARM_SESSION", {sessionId: current.sessionId}); }
+      catch (error) { disarmError = error; }
+    }
+    port?.disconnect(); port = null; rejectPending(new Error("SESSION_DISARMED"));
+    if (disarmError instanceof Error) throw disarmError;
+    return {armed: false};
+  });
 }
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   if (message.kind === "LIFECYCLE") { sendLifecycle(message.type, message.jobId, message.errorCode, message.assistantOutput).then(() => respond({ok: true}), (error) => respond({ok: false, error: error.message})); return true; }

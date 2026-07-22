@@ -38,7 +38,7 @@ function harness() {
   const chrome = {
     runtime: {
       lastError: null,
-      getManifest: () => ({version: "0.2.0"}),
+      getManifest: () => ({version: "0.2.1"}),
       connectNative: () => { const created = port(); ports.push(created); return created; },
       onMessage: runtimeMessages,
     },
@@ -124,6 +124,30 @@ test("extension waits for lifecycle ACK, acknowledges dispatch receipt and recov
   assert.equal((await disarmResult).ok, true);
   await new Promise((resolveWait) => setTimeout(resolveWait, 400));
   assert.equal(h.ports.length, 2);
+});
+
+test("disarm clears the native session even when the extension port is disconnected", async () => {
+  const h = harness();
+  const armResult = h.runtime({kind: "POPUP_ARM"});
+  await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
+  const firstPort = h.ports[0];
+  const armRequest = firstPort.messages.find((message) => message.type === "ARM_SESSION");
+  h.respondTo(firstPort, armRequest, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
+  assert.equal((await armResult).ok, true);
+
+  await firstPort.onDisconnect.emit();
+  const disarmResult = h.runtime({kind: "POPUP_DISARM"});
+  await waitFor(() => h.ports.length === 2 && h.ports[1].messages.some((message) => message.type === "DISARM_SESSION"));
+  const disarm = h.ports[1].messages.find((message) => message.type === "DISARM_SESSION");
+  assert.equal(disarm.sessionId, armRequest.sessionId);
+  h.respondTo(h.ports[1], disarm, "SESSION_DISARMED");
+  assert.equal((await disarmResult).ok, true);
+
+  const rearmResult = h.runtime({kind: "POPUP_ARM"});
+  await waitFor(() => h.ports.length === 3 && h.ports[2].messages.some((message) => message.type === "ARM_SESSION"));
+  const replacementArm = h.ports[2].messages.find((message) => message.type === "ARM_SESSION");
+  h.respondTo(h.ports[2], replacementArm, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
+  assert.equal((await rearmResult).ok, true);
 });
 
 test("same-tab conversation navigation invalidates the armed binding", async () => {
