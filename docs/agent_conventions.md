@@ -69,5 +69,5 @@
 - 改源不改派生（relay-export 输出是派生，不手改）。
 - 最小充分验证：改 envelope / contract → 跑 helper `relay-export` 自检 + targeted tests；改 `extension/content.js` → 扩展重载 + arm 实测。
 - 不擅自扩大范围，不顺手重构 / 格式统一。
-- commit 单一范围；push / merge / tag 受控需授权。
+- commit 保持单一范围。在用户已明确授权的 review/PR workflow 内，agent 可对范围受控且验证完成的改动直接 commit 和 push；merge / tag / branch deletion 仍需单独授权。
 - **触发 review 前必须 push** reviewed head 与 handoff 到远端，否则 reviewer 404 → UNVERIFIED。

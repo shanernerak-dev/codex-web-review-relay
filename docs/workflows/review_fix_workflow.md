@@ -34,8 +34,8 @@ relay 捕获 assistant_output --MCP 回传--> repo agent
 ## web reviewer 契约
 
 - 凭 envelope 的 `Path` + `reviewed head` 在远端读 handoff 与 commit；不依赖内嵌正文。
-- 以纯文本在对话中回完整 verdict（便于 relay 捕获）。
-- PR comment 可选。
+- 当前 Stage 1 PR-comment baseline：将完整 formal verdict 发布到目标 PR comment；assistant response 只需返回短确认，relay 的 `assistant_output` 作为 transport evidence。
+- Stage 3 relay-only mode 完成并验收后，才可将完整 verdict 通过 `assistant_output` 作为正式来源；该模式下 PR comment 可选。
 
 ## 反模式（务必避免）
 
