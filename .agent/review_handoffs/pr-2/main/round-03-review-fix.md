@@ -44,6 +44,8 @@ Review scope: PR#2 round-03——核销 RGEN-S1-004/RGEN-S1-005，修订 canonic
 - 明确 Stage 1 的 `assistant_output` 只是 transport evidence，不能替代 PR-comment formal gate。
 - 移除 Stage 1 表格中“对话 verdict 可替代 PR comment”的表述。
 - 同步修正 agent convention 与 review-fix workflow，避免把 Stage 3 的 relay-only 结论路径误写成当前 Stage 1 行为。
+- 将 `docs/agent_conventions.md` 的传输契约、角色边界和 `TURN_IDLE` 语义改为 mode-qualified。
+- 将 `docs/workflows/review_fix_workflow.md` 的 repo agent 步骤 9–10 改为 Stage 1 PR-comment readback 分支，并保留 Stage 3 relay-only 作为未来验收后的分支。
 
 ## 评审任务
 

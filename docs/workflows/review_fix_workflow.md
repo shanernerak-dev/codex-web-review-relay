@@ -28,8 +28,8 @@ relay 捕获 assistant_output --MCP 回传--> repo agent
 6. **`git push`**。
 7. 本地校验：`python <helper> relay-export <handoff_path>` 确认 JSON 合法。
 8. 触发 `request_review(handoff_path=...)`。
-9. 接收 `assistant_output`，解析 verdict：`PASS` / `REQUEST CHANGES` / `HUMAN DECISION REQUIRED` / `COMMENT`。
-10. `PASS` → 结束；`REQUEST CHANGES` → 回步骤 1；`HUMAN DECISION REQUIRED` / `COMMENT` → 停止并报告，**不擅自继续**。
+9. Stage 1：接收 `TURN_IDLE` 的短 `assistant_output` 作为 transport evidence；随后读取目标 PR comment，按当前 `reviewed_head`、`Review scope` 和预期 actor 核验并解析 formal verdict。缺失、无法读取或无法确认时返回 `HUMAN DECISION REQUIRED`，不得从短确认推断 verdict。Stage 3 relay-only mode 完成并验收后，才可切换为直接解析完整 `assistant_output`。
+10. Stage 1 的 PR-comment formal verdict 为 `PASS` → 结束，`REQUEST CHANGES` → 回步骤 1，`HUMAN DECISION REQUIRED` / `COMMENT` → 停止并报告，**不擅自继续**。Stage 3 relay-only mode 的 `assistant_output` 分支只能在其 contract 与 completion detection 验收完成后启用。
 
 ## web reviewer 契约
 
