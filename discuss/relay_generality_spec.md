@@ -13,6 +13,8 @@
 - Stage 3 round-02 review：reviewed head `981c7ce` 返回 `REQUEST CHANGES`；`RGEN-S3-001` / `RGEN-S3-005` 已 `ACCEPTED`，`RGEN-S3-002` / `RGEN-S3-003` / `RGEN-S3-004` / `RGEN-S3-006` 保持开放。
 - Stage 3 canonical review identity：`stage3-main/round-02-review-fix`，reviewed head `4bb6ed678f63378442ac3c7e33fa1d876fa2050c`；Stage 3 round 独立从 `round-01` 计数，round-02 已复审但尚未 acceptance。
 - Stage 3 round-03 review handoff：implementation head `9776bd0a6ef374f5046db261f0e0fac147b01a89`，已修复 round-02 的 `RGEN-S3-002` / `RGEN-S3-003` / `RGEN-S3-004` / `RGEN-S3-006`，等待复审。
+- Stage 3 round-03 transport：因浏览器绑定 stale 结束为 `SESSION_LOST`，evidence amendment 保持 `Effective round=3`，未产生 formal verdict。
+- Stage 3 round-04 review handoff：implementation head `084b588`，补充修复 extension `Disarm` / `Arm` session lifecycle，等待复审。
 - 跨仓库适配跟踪：producer `David-JA/single-crystal-stress#44`，用于记录本仓库 generic helper/config 变化对 single-crystal 现有使用方式的影响，并在本 PR 收尾后完成 producer-side readback。
 - Producer-side readback：已使用 producer 当前 `scripts/tools/check_stage_gate_readiness.py` 对历史 tracked handoff 做 v1.0 relay-export readback，exit code `0`；证据与迁移命令已记录在 Issue #44 comment `5045654662`。当前 producer checkout 无 active handoff，Issue 保持 open，等待未来 live handoff 与 companion PR closeout。
 - 关联 PR：本 spec 与全部 stage 改动进入同一个 PR（Stage 1 段 2 创建）。**Stage 3 完成且 README/contract 重新对齐前，PR 必须保持 Draft 状态，禁止 merge。**
