@@ -81,9 +81,10 @@
   function isAssistantComplete(document, node) {
     const container = turnContainer(node);
     if (!container?.querySelector) return false;
-    return Boolean(container.querySelector(
-      "[data-testid='copy-turn-action-button'], [data-testid='copy-message-button'], button[aria-label^='Copy'], button[aria-label^='复制']",
-    ));
+    if (container.querySelector("[data-testid='copy-turn-action-button'], [data-testid='copy-message-button']")) return true;
+    const copyButton = container.querySelector("button[aria-label='Copy'], button[aria-label='复制']");
+    if (!copyButton) return false;
+    return !copyButton.closest?.("pre, code, [data-testid*='code'], [class*='code']");
   }
   function newTurn(document, baseline, role, exactText) {
     const matches = Array.from(document.querySelectorAll(TURN_SELECTOR)).filter((node) => !baseline.has(node) && node.getAttribute("data-message-author-role") === role && (exactText === undefined || normalizedText(node) === exactText.trim()));

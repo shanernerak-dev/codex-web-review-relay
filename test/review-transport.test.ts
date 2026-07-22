@@ -361,6 +361,36 @@ test("legacy unsupported commit rows are blocked before a later PR dispatch", as
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 
+test("legacy PR rows with review-* streams are never classified as commit rows", async () => {
+  for (const relayJson of [null, "{invalid-json"] as const) {
+    const {root, store, coordinator, bridge} = fixture();
+    const legacyPr = relayFixture({
+      handoff_path: ".agent/review_handoffs/pr-41/review-main/round-01-review-request.md",
+      review_stream: "review-main",
+    });
+    const nextPr = relayFixture({
+      handoff_path: ".agent/review_handoffs/pr-41/review-main/round-02-review-request.md",
+      review_stream: "review-main",
+      handoff_sha256: "c".repeat(64),
+    });
+    const oldJob = store.createOrGetJob(legacyPr, relayFingerprint(legacyPr), new Date(Date.now() + 60_000)).job;
+    coordinator.transition(oldJob.job_id, "DISPATCHED");
+    store.db.prepare("UPDATE jobs SET relay_json = ? WHERE job_id = ?").run(relayJson, oldJob.job_id);
+    const writes: Record<string, unknown>[] = [];
+    const service = new ReviewTransportService(
+      config(root), store, coordinator, bridge,
+      (message) => writes.push(message),
+      async (_config, handoffPath) => handoffPath === nextPr.handoff_path ? nextPr : legacyPr,
+    );
+    try {
+      await assert.rejects(service.requestReview(nextPr.handoff_path), /ACTIVE_JOB_EXISTS/);
+      assert.equal(store.getJob(oldJob.job_id).phase, "DISPATCHED");
+      assert.equal(store.getJob(oldJob.job_id).error_code, null);
+      assert.equal(writes.length, 0);
+    } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+  }
+});
+
 test("pre-Stage-3 PR rows keep terminal idempotency, mismatch recovery, and status readability", async () => {
   const {root, store, coordinator, bridge} = fixture();
   const currentRelay = relayFixture();

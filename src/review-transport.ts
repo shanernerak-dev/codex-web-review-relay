@@ -38,11 +38,14 @@ function targetIdentity(job: StoredJob): Pick<TransportStatus, "target_kind" | "
       return {target_kind: relay.target_kind, target_id: relay.target_id, target_pr: relay.target_pr};
     } catch { /* Fall through to the durable handoff path identity. */ }
   }
-  const pr = job.handoff_path.match(/\/pr-([1-9][0-9]*)\//);
-  if (pr) return {target_kind: "pr", target_id: `pr-${pr[1]}`, target_pr: Number(pr[1])};
-  const commit = job.handoff_path.match(/\/review-([a-z0-9][a-z0-9-]*)\//);
-  if (commit) return {target_kind: "commit", target_id: `review-${commit[1]}`, target_pr: null};
-  return {target_kind: "pr", target_id: "legacy", target_pr: null};
+  return pathTargetIdentity(job.handoff_path);
+}
+
+function pathTargetIdentity(handoffPath: string): Pick<TransportStatus, "target_kind" | "target_id" | "target_pr"> {
+  const match = handoffPath.match(/^\.agent\/review_handoffs\/(pr-([1-9][0-9]*)|review-[a-z0-9][a-z0-9-]*)\//);
+  if (!match) throw new Error("RELAY_STORED_TARGET_IDENTITY_UNAVAILABLE");
+  if (match[2]) return {target_kind: "pr", target_id: match[1], target_pr: Number(match[2])};
+  return {target_kind: "commit", target_id: match[1], target_pr: null};
 }
 
 function publicStatus(job: StoredJob): TransportStatus {
@@ -116,7 +119,7 @@ export class ReviewTransportService {
     if (typeof job.relay_json === "string" && job.relay_json.length > 0) {
       try { return validateRelayExport(JSON.parse(job.relay_json)).target_kind; } catch { /* use path */ }
     }
-    return job.handoff_path.includes("/review-") ? "commit" : "pr";
+    return pathTargetIdentity(job.handoff_path).target_kind;
   }
 
   private cleanupUnsupportedActiveCommit(active: StoredJob, relay: RelayExport, sessionId: string): void {

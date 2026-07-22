@@ -56,7 +56,8 @@
 
 - **Node.js >= 24**（使用 `--experimental-strip-types` 原生运行 TypeScript）
 - **Chrome**（任何支持 Manifest V3 + Native Messaging 的近期版本）
-- **Python**（用于仓库侧的 `relay-export` helper；见"集成"章节）
+- **Python**（用于仓库侧的 `relay-export` helper；见“集成”章节）
+- **Python dev dependencies**（schema 测试需要，执行 `python -m pip install -r requirements-dev.txt`）
 - **Windows**（安装器基于 PowerShell；Linux/macOS 适配直接但尚未脚本化）
 
 ### 平台与账号依赖
@@ -413,6 +414,9 @@ Review scope: <评审者应关注的内容>
 ## 开发
 
 ```powershell
+# 安装 published-schema 测试使用的已固定版本 Python 依赖
+python -m pip install -r requirements-dev.txt
+
 # 运行 targeted 测试
 npx tsx --test test/job-store.test.ts test/review-transport.test.ts
 

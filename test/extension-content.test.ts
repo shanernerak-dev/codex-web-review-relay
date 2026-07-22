@@ -20,6 +20,7 @@ function harness(ackDelayMs = 0) {
   let assistant = false;
   let assistantOutput = "final review output";
   let assistantComplete = false;
+  let codeCopy = false;
   let generating = false;
   const runtimeListeners: Array<(message: any, sender: any, respond: (value: any) => void) => boolean | void> = [];
   let observerCallback: (() => void) | null = null;
@@ -38,7 +39,7 @@ function harness(ackDelayMs = 0) {
     newTurn: (_document: unknown, _baseline: Set<unknown>, role: string) => role === "user" ? (user ? {} : null) : (assistant ? {innerText: "final review output"} : null),
     rawText: (node: any) => node?.innerText ?? "",
     rawTurnText: (_document: unknown, _node: any) => assistantOutput,
-    isAssistantComplete: () => assistantComplete,
+    isAssistantComplete: () => assistantComplete && !codeCopy,
     isGenerating: () => generating,
     isResponseIdle: () => !generating,
     isIdle: () => { throw new Error("COMPOSER_NOT_REQUIRED_FOR_RESPONSE_IDLE"); },
@@ -88,7 +89,7 @@ function harness(ackDelayMs = 0) {
 
   function reconcile(deadlineMs = 2_000) {
     return new Promise<any>((resolveResponse) => {
-      runtimeListeners[0]({kind: "RECONCILE_TRIGGER", jobId: "job-1", envelope: "Path: x", allowUnsentSend: true, deadline: new Date(Date.now() + deadlineMs).toISOString()}, {}, resolveResponse);
+      runtimeListeners[0]({kind: "RECONCILE_TRIGGER", jobId: "job-1", envelope: "Path: x", reviewMode: "relay-only", allowUnsentSend: true, deadline: new Date(Date.now() + deadlineMs).toISOString()}, {}, resolveResponse);
     });
   }
 
@@ -103,6 +104,7 @@ function harness(ackDelayMs = 0) {
     setAssistant(value: boolean) { assistant = value; },
     setAssistantOutput(value: string) { assistantOutput = value; },
     setAssistantComplete(value: boolean) { assistantComplete = value; },
+    setAssistantCodeCopy(value: boolean) { codeCopy = value; },
     setGenerating(value: boolean) { generating = value; },
   };
 }
@@ -217,6 +219,18 @@ test("relay-only reconcile does not complete a partial assistant bubble without 
   h.setAssistant(true);
   h.setAssistantComplete(false);
   h.setAssistantOutput("partial reply recovered after reconnect");
+  assert.equal((await h.reconcile(1_200)).ok, true);
+  await waitFor(() => h.events.includes("TURN_TIMEOUT"), 2_500);
+  assert.equal(h.events.includes("TURN_IDLE"), false);
+});
+
+test("relay-only reconcile ignores a code-copy marker until turn completion evidence appears", async () => {
+  const h = harness();
+  h.setUser(true);
+  h.setAssistant(true);
+  h.setAssistantOutput("partial reply containing a code block");
+  h.setAssistantComplete(true);
+  h.setAssistantCodeCopy(true);
   assert.equal((await h.reconcile(1_200)).ok, true);
   await waitFor(() => h.events.includes("TURN_TIMEOUT"), 2_500);
   assert.equal(h.events.includes("TURN_IDLE"), false);

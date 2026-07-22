@@ -10,7 +10,11 @@ const schema = JSON.parse(readFileSync(resolve("contracts/relay-export.schema.js
 const schemaPath = resolve("contracts/relay-export.schema.json");
 const PYTHON_SCHEMA_VALIDATOR = `
 import json, sys
-from jsonschema import Draft202012Validator
+try:
+    from jsonschema import Draft202012Validator
+except ModuleNotFoundError:
+    print("Missing Python test dependency 'jsonschema'. Run: python -m pip install -r requirements-dev.txt", file=sys.stderr)
+    raise SystemExit(2)
 schema = json.load(open(sys.argv[1], encoding="utf-8"))
 value = json.load(sys.stdin)
 errors = sorted(Draft202012Validator(schema).iter_errors(value), key=lambda error: list(error.path))

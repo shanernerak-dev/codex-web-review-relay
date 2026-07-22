@@ -204,7 +204,7 @@ test("DOM adapter uses a copy action inside the assistant turn as completion evi
   const copy = node();
   const turn = node({
     querySelector(selector) {
-      return selector.includes("aria-label^='Copy'") ? copy : null;
+      return selector.includes("button[aria-label='Copy']") ? copy : null;
     },
   });
   const assistant = node({closest(selector) { return selector === "[data-testid='conversation-turn']" ? turn : null; }});
@@ -212,6 +212,17 @@ test("DOM adapter uses a copy action inside the assistant turn as completion evi
   assert.equal(adapter.isAssistantComplete(document, assistant), true);
   const incomplete = node({closest(selector) { return selector === "[data-testid='conversation-turn']" ? node() : null; }});
   assert.equal(adapter.isAssistantComplete(document, incomplete), false);
+});
+
+test("DOM adapter ignores code-block copy controls as turn completion evidence", () => {
+  const codeCopy = node({closest() { return node(); }});
+  const turn = node({
+    querySelector(selector) {
+      return selector.includes("button[aria-label='Copy']") ? codeCopy : null;
+    },
+  });
+  const assistant = node({closest(selector) { return selector === "[data-testid='conversation-turn']" ? turn : null; }});
+  assert.equal(adapter.isAssistantComplete(fakeDocument(new Map()), assistant), false);
 });
 
 test("DOM adapter reconciles existing user turn or one exact unsent draft", async () => {

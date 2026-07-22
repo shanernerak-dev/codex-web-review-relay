@@ -59,6 +59,7 @@ This relay automates steps 2-3 while keeping **you in control**: you manually op
 - **Node.js >= 24** (uses `--experimental-strip-types` for native TypeScript)
 - **Chrome** (any recent version with Manifest V3 + Native Messaging support)
 - **Python** (for the repository-side `relay-export` helper; see Integration)
+- **Python dev dependencies** for the schema test (`python -m pip install -r requirements-dev.txt`)
 - **Windows** (installer is PowerShell-based; Linux/macOS adaptation is straightforward but not yet scripted)
 
 ### Platform and Account Dependencies
@@ -415,6 +416,9 @@ If you want similar structure, see:
 ## Development
 
 ```powershell
+# Install the pinned Python dependency used by the published-schema test
+python -m pip install -r requirements-dev.txt
+
 # Run targeted tests
 npx tsx --test test/job-store.test.ts test/review-transport.test.ts
 
