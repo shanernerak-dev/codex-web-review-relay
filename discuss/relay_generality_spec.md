@@ -57,7 +57,7 @@
 - trigger envelope 仅含 6 个动态定位字段 + 固定指令，**绝不内嵌 handoff 正文**；reviewer 凭 `Path` 与 `reviewed head` 在远端读 commit / handoff。开源仓库经 commit 取证是不可动摇的基础。
 - PR 模式下，`target_pr` 必须指向**当前 open、正在审的 PR**，`reviewed_head` 落在该 PR 的 diff 作用域内；不得指向已 merge 的 PR。commit-only 模式不要求 `target_pr` 或 open PR，但必须使用已定义的 `target_kind` / `target_id` contract，并以 `full_ref` + `reviewed_head` 完成远端取证。PR 状态和 PR-head equality 检查属于 **caller-side orchestration preflight**（由 Repo Agent 在触发 `request_review` 前经 GitHub API 独立验证），不是 native host / helper / transport 的 fail-closed 不变量。
 - fail-closed（transport 层）：path escape / hash mismatch / detached HEAD / 缺 session，均中止于 dispatch 前。
-- `TURN_IDLE` 只描述 transport 完成；verdict 的正式来源按模式声明——PR-comment 模式以 GitHub readback 为准，无 PR 模式以 `assistant_output` 为准（由 conventions 明确，不混淆）。
+- `TURN_IDLE` 只描述 transport 完成；在 Stage 3 relay-only contract 完成并验收前，Stage 1/Stage 2 的 v1 PR-comment mode 以 GitHub readback 为 formal verdict 来源；Stage 3 无 PR 模式完成验收后才以 `assistant_output` 为准（由 conventions 明确，不混淆）。
 - v1 PR 模式的 handoff 路径正则、relay-export 字段与 `scope_sha256 == sha256(canonical_json(normalized_scope))` 约束保持兼容；Stage 3 为 commit-only 模式增加对应的路径形态、target identity 字段和 schema version 规则。
 
 ## 授权与轮次（按 Stage 独立计数；对齐 producer，不写无条件硬上限）

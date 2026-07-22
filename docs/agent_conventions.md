@@ -13,8 +13,8 @@
 
 - **两层依赖**：
   - L1 relay transport：零外部依赖，负责返回 transport completion、`assistant_output` 与 SHA-256。
-  - formal verdict source 由 workflow mode 声明：当前 Stage 1 PR-comment baseline 以目标 PR comment readback 为正式来源，`assistant_output` 只作为非空短确认；Stage 3 relay-only mode 完成并验收后，才可将完整 `assistant_output` 作为正式结论，PR comment 在该模式下可选。
-- **envelope 构成**：6 个动态字段 `handoff_path` / `full_ref` / `reviewed_head` / `review_stream` / `effective_round` / `package_kind` + 当前 Stage 1 的固定 PR-publication instruction。该 instruction 要求 reviewer 将 formal verdict 发布到目标 PR comment；Stage 3 relay-only contract 验收后才可改为或增加对应的 assistant-output instruction。见 `src/envelope.ts`。
+  - formal verdict source 由 workflow mode 声明：在 Stage 3 relay-only contract 完成并验收前，Stage 1/Stage 2 的 v1 PR-comment mode 均以目标 PR comment readback 为正式来源，`assistant_output` 只作为非空短确认；Stage 3 relay-only mode 完成并验收后，才可将完整 `assistant_output` 作为正式结论，PR comment 在该模式下可选。
+  - **envelope 构成**：6 个动态字段 `handoff_path` / `full_ref` / `reviewed_head` / `review_stream` / `effective_round` / `package_kind` + Stage 1/Stage 2 v1 PR-comment mode 的固定 PR-publication instruction。该 instruction 要求 reviewer 将 formal verdict 发布到目标 PR comment；Stage 3 relay-only contract 验收后才可改为或增加对应的 assistant-output instruction。见 `src/envelope.ts`。
 - **native host 不解析 handoff 正文**：只哈希文件并消费 helper 产出的 relay-export JSON。envelope **不提供正文兜底**——reviewer 必须经 `reviewed head` 在远端读 commit 与 handoff。
 
 ## 角色边界
@@ -22,7 +22,7 @@
 | 角色 | 职责 | 不做什么 |
 |---|---|---|
 | repo agent | 写 handoff、commit、**push**、触发 `request_review`、解析 verdict、按 findings 改文档 | 不替 reviewer 下结论 |
-| web reviewer | 读 `Path` + `reviewed head`、评审；Stage 1 发布完整 formal verdict 到目标 PR comment 并回短确认，Stage 3 relay-only mode 验收后才可通过 `assistant_output` 回完整 verdict | 不依赖 envelope 内嵌正文 |
+| web reviewer | 读 `Path` + `reviewed head`、评审；Stage 1/Stage 2 的 v1 PR-comment mode 发布完整 formal verdict 到目标 PR comment 并回短确认，Stage 3 relay-only mode 验收后才可通过 `assistant_output` 回完整 verdict | 不依赖 envelope 内嵌正文 |
 | native host | 校验 relay-export、哈希 handoff、dispatch、捕获 `assistant_output`、fail-closed | 不解析 handoff Markdown 语义 |
 | repository helper | 解析 handoff header fields、校验 path/header/git 状态、算 hash、输出 relay-export JSON | 不接触浏览器 / 网络 |
 
@@ -56,7 +56,7 @@
 - **可返回 phase**：terminal + `SESSION_LOST` + `SEND_UNCERTAIN`（等待切片在 recovery 完成前超时）。后两者视为可重试。
 - **同 fingerprint 重试幂等**：active 则加入现有等待；terminal 则立即返回存储结果。
 - **手动恢复**：仅 `recover_review(handoff_path, confirm_unsent=true)` 可在 terminal `MISMATCH` 后重 dispatch，一次性，须确认原消息未发送。
-- **`TURN_IDLE`**：表示浏览器 transport completion。Stage 1 的 `assistant_output` 只应是非空短确认，formal verdict 必须从目标 PR comment readback；只有 Stage 3 relay-only mode 实现并验收后，`assistant_output` 才可作为正式结论。
+- **`TURN_IDLE`**：表示浏览器 transport completion。Stage 1/Stage 2 的 `assistant_output` 只应是非空短确认，formal verdict 必须从目标 PR comment readback；只有 Stage 3 relay-only mode 实现并验收后，`assistant_output` 才可作为正式结论。
 
 ## 文档同步
 

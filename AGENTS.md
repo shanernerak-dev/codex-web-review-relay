@@ -24,7 +24,7 @@
 
 ## 红线（不可违反；细则在 conventions）
 
-1. relay 是 localhost-only transport；formal verdict 来源由 workflow mode 声明：当前 Stage 1 PR-comment baseline 以 PR comment 为正式来源，relay `assistant_output` 只作为 transport evidence；Stage 3 relay-only mode 验收后才可将 `assistant_output` 作为正式结论，PR comment 在该模式下可选。
+1. relay 是 localhost-only transport；在 Stage 3 relay-only contract 完成并验收前，Stage 1/Stage 2 均沿用 v1 PR-comment mode：目标 PR comment 是 formal verdict 来源，relay `assistant_output` 只作为 transport evidence；Stage 3 验收后才可将 `assistant_output` 作为正式结论，PR comment 在该模式下可选。
 2. trigger envelope 仅含 6 个动态字段 + 固定指令，**绝不内嵌 handoff 正文**；reviewer 凭 `Path` 与 `reviewed head` 在远端读 commit / handoff。开源仓库经 commit 取证是不可动摇的基础。
 3. 改 relay 行为以 `src/*` 与 `contracts/*` 为权威；改公开文档须 `README.md` 与 `README.zh-CN.md` 同步。
 4. handoff / helper 合同 fail-closed：任何校验失败中止于 dispatch 前。

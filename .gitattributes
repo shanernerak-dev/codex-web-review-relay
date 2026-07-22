@@ -1,0 +1,2 @@
+# Review handoff identity is byte-based; keep tracked handoffs stable across Windows checkouts.
+.agent/review_handoffs/**/*.md text eol=lf

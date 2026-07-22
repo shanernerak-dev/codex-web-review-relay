@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -28,13 +29,14 @@ function validHandoff(): string {
   ].join("\n");
 }
 
-function createRepo(content: string, commit = true): string {
+function createRepo(content: string | Buffer, commit = true): string {
   const root = mkdtempSync(join(tmpdir(), "relay-helper-test-"));
   mkdirSync(join(root, ".agent", "review_handoffs", "pr-2", "main"), {recursive: true});
   mkdirSync(join(root, "scripts", "tools"), {recursive: true});
   copyFileSync(HELPER_SOURCE, join(root, "scripts", "tools", "relay_export_helper.py"));
   writeFileSync(join(root, HANDOFF), content, "utf8");
   git(root, "init", "-q");
+  git(root, "config", "core.autocrlf", "false");
   git(root, "remote", "add", "origin", "https://github.com/example/relay.git");
   if (commit) {
     git(root, "add", ".");
@@ -116,5 +118,21 @@ test("generic relay-export helper fails closed for untracked, dirty, blob-mismat
   withRepo(validHandoff(), (root) => {
     git(root, "checkout", "--detach", "-q", "HEAD");
     assert.equal(runHelper(root).stderr.trim(), "DETACHED_HEAD");
+  });
+});
+
+test("generic relay-export helper hashes committed CRLF bytes and rejects invalid UTF-8 stably", () => {
+  const crlf = Buffer.from(validHandoff().replaceAll("\n", "\r\n"), "utf8");
+  withRepo(crlf, (root) => {
+    const result = runHelper(root);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).handoff_sha256, createHash("sha256").update(readFileSync(join(root, HANDOFF))).digest("hex"));
+  });
+  const invalid = Buffer.concat([Buffer.from(validHandoff(), "utf8"), Buffer.from([0xff])]);
+  withRepo(invalid, (root) => {
+    const result = runHelper(root);
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr.trim(), "HANDOFF_ENCODING_INVALID");
+    assert.equal(result.stdout, "");
   });
 });
