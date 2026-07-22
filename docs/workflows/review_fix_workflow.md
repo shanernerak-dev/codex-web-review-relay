@@ -7,9 +7,9 @@
 ```
 repo agent --(handoff + commit + push)--> 远端 (GitHub)
 repo agent --request_review--> relay --dispatch(envelope)--> Chrome ext --> ChatGPT composer
-web reviewer 读 远端 commit + handoff --> 评审 --> 纯文本回复
-relay 捕获 assistant_output --MCP 回传--> repo agent
-(可选) web reviewer --> GitHub PR comment
+Stage 1: web reviewer 读远端 commit + handoff --> 评审 --> 完整 verdict 发布到 PR comment
+Stage 1: web reviewer --> 短确认 --> relay 捕获 assistant_output --MCP 回传--> repo agent
+Stage 3 验收后: assistant_output 可承载完整 verdict；PR comment 可选
 ```
 
 ## 轮次模型
