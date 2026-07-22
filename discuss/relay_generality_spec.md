@@ -6,9 +6,10 @@
 
 - 当前阶段：Stage 2（进行中）。
 - Stage 1 acceptance：已由 Maintainer 批准进入 Stage 2；round-04 review-fix 在 reviewed head `09c0e063214646542666c5dda8057cd46b404d59` 返回 `PASS`，并确认 `RGEN-S1-005` / `RGEN-S1-006` 为 `ACCEPTED`。该记录不等同于 Ready、Issue acceptance 或 merge authorization。
+- Stage 2 canonical review identity：`stage2-main/round-01-review-request`。此前 `main/round-05` 仅作为 Stage 2 初次尝试的历史评审记录保留；按 Stage-scoped round convention，当前 Stage 2 从 `round-01` 重新计数。
 - 跨仓库适配跟踪：producer `David-JA/single-crystal-stress#44`，用于记录本仓库 generic helper/config 变化对 single-crystal 现有使用方式的影响，并在本 PR 收尾后完成 producer-side readback。
 - 关联 PR：本 spec 与全部 stage 改动进入同一个 PR（Stage 1 段 2 创建）。**Stage 3 完成且 README/contract 重新对齐前，PR 必须保持 Draft 状态，禁止 merge。**
-- 分支：`codex/relay-generality`，base = 分支创建时的 main tip（round-06 handoff 提交 `7629293`）。
+- 分支：`codex/relay-generality`，base = 分支创建时的 main tip（`7629293`）。Stage 1 的 round history 与 Stage 2 的 round history 分开计数。
 - transport 基线参照：PR#1 merge 点 `43c33e4`（producer 已验证可用的 completion detection + 单条 PR-comment 指令版本）。
 
 ## 目标
@@ -59,18 +60,19 @@
 - `TURN_IDLE` 只描述 transport 完成；verdict 的正式来源按模式声明——PR-comment 模式以 GitHub readback 为准，无 PR 模式以 `assistant_output` 为准（由 conventions 明确，不混淆）。
 - v1 PR 模式的 handoff 路径正则、relay-export 字段与 `scope_sha256 == sha256(canonical_json(normalized_scope))` 约束保持兼容；Stage 3 为 commit-only 模式增加对应的路径形态、target identity 字段和 schema version 规则。
 
-## 授权与轮次（对齐 producer，不写无条件硬上限）
+## 授权与轮次（按 Stage 独立计数；对齐 producer，不写无条件硬上限）
 
 - 5 轮预算绑定 `authorization_class = preauthorized-dual-agent-gate|closeout`（无人值守防死循环的保护性预算）。
 - `maintainer-attended` 模式无该固定上限，是否继续由 Maintainer 逐轮决定。
-- 更换 review stream 不得绕过同一 unattended Stage 预算；transport retry / same-fingerprint retry / browser readback retry 不增加有效轮次。
+- `Effective round` 的计数域是 `(Stage, review stream)`；Stage transition 后下一 Stage 从 `round-01` 开始，不得将 Stage 1 的 round-04 累计成 Stage 2 的 round-05。当前 v1 handoff path 没有独立 Stage segment，因此 Stage 2 使用带作用域的 stream（`stage2-main`）避免 path/fingerprint 冲突。
+- 更换 review stream 不得绕过同一 unattended Stage 预算；transport retry / same-fingerprint retry / browser readback retry 不增加有效轮次。历史 handoff identity append-only，纠正 round scope 时创建新的 Stage-scoped handoff。
 
 ## Stage 1 验收细节
 
 - transport 文件 `extension/content.js`、`src/envelope.ts` 与基线 `43c33e4` 逐字节一致（`git diff 43c33e4 -- <files>` 为空）。
 - 存在 open draft PR，`target_pr` = 该 PR 编号，`reviewed_head` = 分支 tip。
 - 至少完成一轮：relay 返回 `TURN_IDLE` 且 `assistant_output` 非空（短确认），**并且** web agent 已将完整 formal verdict 发布到目标 PR comment，且该 verdict 能由预期 actor 在当前 `reviewed_head` / `Review scope` 下独立 readback。Stage 1 的短 `assistant_output` 只能作为 transport evidence，不能替代 PR-comment formal gate。
-- 若 web agent 给 `REQUEST CHANGES`，在该分支上修复并进入 round-02，最多 5 轮。
+- 若 web agent 给 `REQUEST CHANGES`，在 Stage 1 的同一 stream 上修复并进入该 Stage 的 round-02，最多 5 轮；进入 Stage 2 后 round 重新从 01 计数。
 
 ## 风险与回退
 

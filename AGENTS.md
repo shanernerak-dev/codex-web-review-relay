@@ -28,4 +28,5 @@
 2. trigger envelope 仅含 6 个动态字段 + 固定指令，**绝不内嵌 handoff 正文**；reviewer 凭 `Path` 与 `reviewed head` 在远端读 commit / handoff。开源仓库经 commit 取证是不可动摇的基础。
 3. 改 relay 行为以 `src/*` 与 `contracts/*` 为权威；改公开文档须 `README.md` 与 `README.zh-CN.md` 同步。
 4. handoff / helper 合同 fail-closed：任何校验失败中止于 dispatch 前。
-5. 不擅自扩大改动范围；commit 保持单一范围。在用户已明确授权的 review/PR workflow 内，agent 可对范围受控且验证完成的改动直接 commit 和 push；merge / tag / branch deletion 仍需单独授权。
+5. review round 按 Stage 独立计数；Stage 切换后从 `round-01` 重新开始，不得把上一 Stage 的 round 累计到下一 Stage。为避免 v1 handoff path 冲突，跨 Stage 的 stream 必须带 Stage 作用域。
+6. 不擅自扩大改动范围；commit 保持单一范围。在用户已明确授权的 review/PR workflow 内，agent 可对范围受控且验证完成的改动直接 commit 和 push；merge / tag / branch deletion 仍需单独授权。

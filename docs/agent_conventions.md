@@ -38,6 +38,13 @@
 - **helper CLI**：`python <helperPath> relay-export <handoff_path>`，`cwd = repositoryRoot`。成功：stdout **仅一个** JSON 对象；失败：非零退出 + stderr 稳定错误码。见 `src/repo-adapter.ts`。
 - **header fields 非 YAML frontmatter**：scope 等取自正文稳定 header 行（如 `Review scope:`），不要写成 frontmatter。
 
+### Stage-scoped review round
+
+- `Effective round` 的计数域是 `(Stage, review stream)`，不是整个 PR 或整个仓库。Stage 发生 transition 后，下一 Stage 必须从 `round-01` 重新开始。
+- 同一 Stage 内，`round-01` 是 `review-request`；后续 `round-N`（`N > 1`）是该 Stage 的 `review-fix`。transport retry、same-fingerprint retry 和 readback retry 不增加有效 round。
+- 当前 v1 handoff path 没有独立的 Stage segment；因此跨 Stage 必须使用带 Stage 作用域的 `Review stream`（例如 `stage2-main`），避免与上一 Stage 的 `main/round-01` identity 冲突。不得用跨 Stage 累计的 `round-05` 代替 Stage 2 的 `round-01`。
+- 历史 handoff identity 保持 append-only；发现 round scope 错误时，创建新的 Stage-scoped handoff，不改写已评审 handoff 或其 GitHub comment。
+
 ## job 生命周期
 
 | 类别 | phase |

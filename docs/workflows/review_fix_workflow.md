@@ -14,16 +14,17 @@ Stage 3 验收后: assistant_output 可承载完整 verdict；PR comment 可选
 
 ## 轮次模型
 
-- round-01 = `review-request`；round-N (N>1) = `review-fix`。
-- 路径含 round 编号 → fingerprint 唯一 → 防重复 dispatch。
-- 轮次上限是**调用侧策略**（relay 不限制），示例 `MAX_REVIEW_ROUNDS = 5`。
+- round 计数按 `(Stage, review stream)` 独立作用域；Stage transition 后从 `round-01` 重新开始，不跨 Stage 累加。
+- 同一 Stage 内，round-01 = `review-request`；round-N (N>1) = `review-fix`。路径含 round 编号与 Stage-scoped stream → fingerprint 唯一 → 防重复 dispatch。
+- 当前 v1 path 没有独立 Stage segment，因此跨 Stage 的 stream 必须显式带 Stage 作用域，例如 Stage 2 使用 `stage2-main`，不能继续使用上一 Stage 的 `main` 并改成 `round-05`。
+- 轮次上限是**调用侧策略**（relay 不限制），示例 `MAX_REVIEW_ROUNDS = 5`；该预算也按 Stage 重新计算。
 
 ## repo agent 单轮步骤
 
 1. 按上一轮 findings 改文档（中英同步）。
 2. `git add` 仅相关文档 → `git commit`（单一范围）。
 3. **`git push` 到远端**（红线：reviewer 经远端读 commit，未 push = 404 = UNVERIFIED）。
-4. 写 handoff：round-N、`package_kind=review-fix`，正文含 **finding → fix 映射**（逐条处置）。
+4. 写 handoff：当前 Stage 的 round-N、Stage-scoped stream、`package_kind=review-fix`，正文含 **finding → fix 映射**（逐条处置）。
 5. `git add` handoff → `git commit`。
 6. **`git push`**。
 7. 本地校验：`python <helper> relay-export <handoff_path>` 确认 JSON 合法。

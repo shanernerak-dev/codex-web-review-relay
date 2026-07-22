@@ -31,6 +31,16 @@ if ($Remove) {
 
 if (-not (Test-Path -LiteralPath $repo -PathType Container)) { throw "RepositoryRoot does not exist: $repo" }
 if ([System.IO.Path]::IsPathRooted($HelperPath)) { throw 'HelperPath must be repository-relative.' }
+if (($HelperPath -split '[\\/]') -contains '..') { throw 'HelperPath must not contain parent traversal.' }
+$repoCanonical = (Resolve-Path -LiteralPath $repo -ErrorAction Stop).Path.TrimEnd('\')
+$helperCandidate = [System.IO.Path]::GetFullPath((Join-Path $repo $HelperPath))
+if (-not (Test-Path -LiteralPath $helperCandidate -PathType Leaf)) { throw "HelperPath does not resolve to a file: $HelperPath" }
+$helperCanonical = (Resolve-Path -LiteralPath $helperCandidate -ErrorAction Stop).Path
+$repoPrefix = "$repoCanonical\"
+if (-not $helperCanonical.StartsWith($repoPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'HelperPath must resolve strictly inside RepositoryRoot.'
+}
+$HelperPath = $HelperPath.Replace('\', '/')
 $node = (Get-Command $NodeExecutable -ErrorAction Stop).Source
 $python = (Get-Command $PythonExecutable -ErrorAction Stop).Source
 if (-not $PSCmdlet.ShouldProcess($install, 'Install review relay native host')) { return }

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { isAbsolute, win32 } from "node:path";
 
 export interface RelayConfig {
   listenHost: "127.0.0.1" | "::1";
@@ -13,6 +14,13 @@ export interface RelayConfig {
   extensionId: string;
   requestWaitSliceMs: number;
   turnDeadlineMs: number;
+}
+
+function isRepositoryRelativePath(value: string): boolean {
+  if (value.includes("\0") || isAbsolute(value) || win32.isAbsolute(value) || /^(?:\\\\|\/\/)/.test(value) || /^[A-Za-z]:/.test(value)) {
+    return false;
+  }
+  return !value.split(/[\\/]+/).some((segment) => segment === "..");
 }
 
 export function validateConfig(value: unknown): RelayConfig {
@@ -33,6 +41,9 @@ export function validateConfig(value: unknown): RelayConfig {
     if (typeof config[key] !== "string" || (config[key] as string).length === 0) {
       throw new Error(`CONFIG_INVALID:${key}`);
     }
+  }
+  if (!isRepositoryRelativePath(config.helperPath as string)) {
+    throw new Error("CONFIG_INVALID:helperPathBoundary");
   }
   if (!Number.isInteger(config.requestWaitSliceMs) || (config.requestWaitSliceMs as number) < 1_000 || (config.requestWaitSliceMs as number) > 300_000) {
     throw new Error("CONFIG_INVALID:requestWaitSliceMs");

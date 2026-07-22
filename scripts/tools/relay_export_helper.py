@@ -24,8 +24,12 @@ HANDOFF_PATTERN = re.compile(
     r"\.md$"
 )
 
-SCOPE_PATTERN = re.compile(
-    r"^Review scope:\s*(.+)$", re.MULTILINE
+HEADER_FIELDS = (
+    "Package kind",
+    "Review stream",
+    "Effective round",
+    "Target PR",
+    "Review scope",
 )
 
 
@@ -55,6 +59,25 @@ def canonical_json(obj: object) -> str:
     return json.dumps(obj, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
 
 
+def parse_header(text: str, field: str) -> str:
+    matches = re.findall(rf"^{re.escape(field)}[：:]\s*(.*?)\s*$", text, re.MULTILINE)
+    if len(matches) != 1 or not matches[0].strip():
+        fail("HANDOFF_HEADER_INVALID")
+    return matches[0].strip().strip("`").strip()
+
+
+def resolve_handoff(repo_root: Path, handoff_path: str) -> Path:
+    abs_path = repo_root / handoff_path
+    if abs_path.is_symlink():
+        fail("HANDOFF_PATH_SYMLINK")
+    try:
+        resolved = abs_path.resolve(strict=False)
+        resolved.relative_to(repo_root.resolve())
+    except (OSError, RuntimeError, ValueError):
+        fail("HANDOFF_PATH_ESCAPE")
+    return resolved
+
+
 def main() -> None:
     if len(sys.argv) != 3 or sys.argv[1] != "relay-export":
         fail("USAGE_ERROR")
@@ -73,12 +96,17 @@ def main() -> None:
     kind = m.group("kind")
 
     # 2. Verify file exists and is tracked
-    abs_path = Path(repo_root) / handoff_path
+    abs_path = resolve_handoff(Path(repo_root), handoff_path)
     if not abs_path.is_file():
         fail("HANDOFF_NOT_FOUND")
 
-    tracked = git("ls-files", "--error-unmatch", handoff_path, cwd=repo_root)
-    if not tracked:
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", handoff_path],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if tracked.returncode != 0 or not tracked.stdout.strip():
         fail("HANDOFF_NOT_TRACKED")
 
     # 3. Verify worktree matches HEAD (no uncommitted changes)
@@ -89,18 +117,42 @@ def main() -> None:
     )
     if diff.returncode != 0:
         fail("HANDOFF_DIRTY_WORKTREE")
+    head_blob = subprocess.run(
+        ["git", "show", f"HEAD:{handoff_path}"],
+        cwd=repo_root,
+        capture_output=True,
+    )
+    if head_blob.returncode != 0:
+        fail("HANDOFF_HEAD_BLOB_MISSING")
+    try:
+        if abs_path.read_bytes() != head_blob.stdout:
+            fail("HANDOFF_BLOB_MISMATCH")
+    except OSError:
+        fail("HANDOFF_READ_ERROR")
 
     # 4. Read file content and compute hash
     content = abs_path.read_text(encoding="utf-8")
     handoff_sha = sha256_text(content)
 
-    # 5. Extract scope from handoff body
-    scope_match = SCOPE_PATTERN.search(content)
-    if scope_match:
-        scope_raw = scope_match.group(1).strip()
-        normalized_scope = [s.strip() for s in scope_raw.split(",") if s.strip()]
-    else:
-        normalized_scope = ["README documentation review"]
+    # 5. Extract and validate all stable identity headers from the handoff body
+    headers = {field: parse_header(content, field) for field in HEADER_FIELDS}
+    target_match = re.fullmatch(r"#([1-9][0-9]*)", headers["Target PR"])
+    if not target_match:
+        fail("HANDOFF_HEADER_INVALID")
+    if headers["Review stream"] != stream:
+        fail("HANDOFF_PATH_HEADER_MISMATCH")
+    if headers["Package kind"] != kind:
+        fail("HANDOFF_PATH_HEADER_MISMATCH")
+    round_match = re.fullmatch(r"([1-9][0-9]*)(?:\s*/\s*5)?", headers["Effective round"])
+    if not round_match or int(round_match.group(1)) != round_num:
+        fail("HANDOFF_PATH_HEADER_MISMATCH")
+    if int(target_match.group(1)) != pr_number:
+        fail("HANDOFF_PATH_HEADER_MISMATCH")
+
+    scope_raw = re.sub(r"\s+", " ", headers["Review scope"])
+    normalized_scope = [s.strip() for s in re.split(r"[,;；]", scope_raw) if s.strip()]
+    if not normalized_scope:
+        fail("SCOPE_EMPTY")
 
     if not normalized_scope:
         fail("SCOPE_EMPTY")

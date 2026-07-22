@@ -32,7 +32,7 @@ test("native host correlates per-frame errors and exposes MCP only after a valid
     stateDbPath: join(root, "state.sqlite"),
     repositoryRoot: root,
     pythonExecutable: "python",
-    helperPath: join(root, "helper.py"),
+    helperPath: "helper.py",
     nativeHostName: "dev.test.relay",
     extensionId: "a".repeat(32),
     requestWaitSliceMs: 10_000,

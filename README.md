@@ -127,6 +127,16 @@ The native host invokes the helper as `python <helperPath> relay-export <handoff
 
 Or create your own helper following the full contract in the [Integration](#integration-with-your-repository) section below.
 
+### Existing repository migration
+
+The generic default is for new installations. If an existing repository already owns a helper, re-run the installer with that repository-relative path so a reinstall does not replace it with the generic example. For the single-crystal producer, preserve its current helper with:
+
+```powershell
+.\scripts\install-native-host.ps1 -InstallRoot <relay-install-root> -RepositoryRoot C:\coding_projet\pwa1483_1d_scan_stress -HelperPath scripts/tools/check_stage_gate_readiness.py
+```
+
+An existing `relay.config.json` is not rewritten automatically; treat a reinstall or explicit config edit as a migration that must retain the producer's helper path.
+
 ### 4. Load the extension
 
 1. Open `chrome://extensions`
@@ -300,7 +310,7 @@ See `scripts/tools/check_stage_gate_readiness.py relay-export` in the [producer 
 
 1. Validate the handoff path matches `.agent/review_handoffs/pr-<N>/<stream>/round-<NN>-<kind>.md`.
 2. Verify the file is tracked, committed, and worktree matches HEAD.
-3. Read PR number, stream, round, kind from the path; read scope from the handoff header fields (e.g. `Review scope:` line in the Markdown body).
+3. Read and require the `Target PR`, `Review stream`, `Effective round`, `Package kind`, and `Review scope` headers; compare the first four with the canonical path and reject missing, duplicate, malformed, or mismatched values. Scope has no fallback.
 4. Compute SHA-256 hashes and output the JSON.
 5. Exit non-zero with a stable error code on any failure (fail closed).
 
@@ -349,7 +359,7 @@ Edit the generated `relay.config.json`:
 
 Key fields:
 - `repositoryRoot`: your repo's absolute path. The helper runs with this as cwd.
-- `helperPath`: repo-relative path to your relay-export helper.
+- `helperPath`: repo-relative path to your relay-export helper. The installer and native runtime reject absolute paths, parent traversal, and symlink-resolved paths outside `repositoryRoot`.
 - `requestWaitSliceMs`: max time one MCP call waits before returning in-progress (default 5 min).
 - `turnDeadlineMs`: hard deadline for the entire review turn (default 30 min).
 

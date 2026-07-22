@@ -19,3 +19,10 @@ test("config separates bounded wait slice from hard turn deadline", () => {
   assert.throws(() => validateConfig({...validConfig(), turnDeadlineMs: 1_800_001}), /CONFIG_INVALID:turnDeadlineMs/);
   assert.throws(() => validateConfig({...validConfig(), requestWaitSliceMs: 300_000, turnDeadlineMs: 299_999}), /CONFIG_INVALID:turnDeadlineMs/);
 });
+
+test("config rejects helper paths outside the repository-relative boundary", () => {
+  for (const helperPath of ["../outside.py", "..\\outside.py", "C:\\outside.py", "\\\\server\\share\\helper.py", "/tmp/helper.py"]) {
+    assert.throws(() => validateConfig({...validConfig(), helperPath}), /CONFIG_INVALID:helperPathBoundary/);
+  }
+  assert.equal(validateConfig({...validConfig(), helperPath: "scripts/tools/helper.py"}).helperPath, "scripts/tools/helper.py");
+});
