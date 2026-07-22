@@ -74,12 +74,15 @@ If your workflow requires a durable, publicly auditable verdict on the code host
 | Scenario | PR required? | Platform connector required? | Notes |
 |----------|-------------|------------------------------|-------|
 | Relay-only verdict | No | No | Verdict returned via MCP `assistant_output`. Handoff file + job store provide local audit trail. |
-| PR comment as formal record (public repo) | Yes | No | Reviewer reads PR via web and posts comment. Works on any platform with PR + comment (GitHub, GitLab, Gitee, etc.). |
-| PR comment as formal record (private repo) | Yes | Yes | ChatGPT account must have the [GitHub App](https://chatgpt.com/gpts) connector (or equivalent) bound for private repo access. |
+| PR comment (automated, any repo) | Yes | Yes | ChatGPT must have the [GitHub App](https://chatgpt.com/gpts) connector (or equivalent platform connector) bound to read PR content and post comments. Public repos can be read via web, but automated comment posting still requires the connector. |
+| PR comment (manual) | Yes | No | Reviewer reads the PR via web and you manually copy the verdict to a PR comment. No connector needed. |
 
 **In short:**
-- **Minimum setup**: no platform account needed. The relay delivers the verdict; retain handoff files for audit.
-- **With PR comment**: add a code hosting platform with PR + comment capability. For private repos, bind the appropriate platform connector to the ChatGPT account.
+- **Minimum setup (relay-only)**: no platform account needed. The relay delivers the verdict; retain handoff files for audit.
+- **Automated PR comment**: bind the appropriate platform connector (e.g. [GitHub App](https://chatgpt.com/gpts)) to the ChatGPT account. Required for both public and private repos when you want the reviewer to post comments automatically.
+- **Manual PR comment**: no connector needed. The reviewer responds in the conversation; you copy the verdict to a PR comment yourself.
+
+**Adapting to GitLab/Gitee**: the fixed publication instruction lives in `src/envelope.ts` (not in the repository-side helper). To target a different platform, modify `FORMAL_REVIEW_PUBLICATION_INSTRUCTION` in the companion relay source and ensure the web reviewer has read/write access to that platform.
 
 ### 1. Clone this repository
 
@@ -103,6 +106,8 @@ This generates:
 - A Chrome Native Messaging manifest registered for the current user
 - The `CODEX_WEB_REVIEW_RELAY_TOKEN` user environment variable
 
+> **Important**: the launcher embeds the absolute path to `src/cli.ts` in the current clone. **Do not move, rename, or delete this repository checkout after installation.** If you need to relocate it, re-run the installer with the new path.
+
 ### 3. Configure the relay-export helper
 
 The installer sets `helperPath` in `relay.config.json` to `scripts/tools/check_stage_gate_readiness.py` (the producer repository's helper). **You must update this to point at your own helper.**
@@ -115,7 +120,12 @@ If you don't have a helper yet, this repository includes a minimal one at `scrip
 }
 ```
 
-Or create your own helper following the contract in the [Integration](#integration-with-your-repository) section below.
+The native host invokes the helper as `python <helperPath> relay-export <handoff_path>`. Your helper must:
+- Accept `relay-export` as the first argument and a repo-relative handoff path as the second.
+- On success: output exactly one JSON object to stdout (the relay-export schema).
+- On failure: exit non-zero with a stable error code on stderr.
+
+Or create your own helper following the full contract in the [Integration](#integration-with-your-repository) section below.
 
 ### 4. Load the extension
 
@@ -129,11 +139,25 @@ The extension ID is fixed: `kkdijpckhlminpolkllmmkldlljakfem`.
 
 1. Open (or create) a ChatGPT conversation you want to use as the reviewer.
 2. Click the extension icon and click **Arm**.
-3. The popup confirms the session is active with a lease timer.
+3. The popup confirms the session is armed and shows connection status.
 
 ### 6. Connect your MCP client
 
-In your Codex project config (or any MCP client config). Note: `${CODEX_WEB_REVIEW_RELAY_TOKEN}` uses shell-style variable expansion. If your MCP client does not support this syntax, replace it with the actual token value from the `CODEX_WEB_REVIEW_RELAY_TOKEN` environment variable.
+> **Important**: the installer sets a **user-level** environment variable (`CODEX_WEB_REVIEW_RELAY_TOKEN`). Already-running terminals, IDEs, or Codex sessions will **not** see it until you open a new terminal or restart the client.
+
+**Codex CLI** (`~/.codex/config.toml` or project-level `.codex/config.toml`):
+
+```toml
+[mcp_servers.review-relay]
+url = "http://127.0.0.1:43127/mcp"
+
+[mcp_servers.review-relay.headers]
+Authorization = "Bearer <paste-your-token-here>"
+```
+
+Replace `<paste-your-token-here>` with the value of `$env:CODEX_WEB_REVIEW_RELAY_TOKEN` (PowerShell) or `%CODEX_WEB_REVIEW_RELAY_TOKEN%` (cmd). Codex TOML does not support environment variable interpolation.
+
+**Generic MCP client** (field names vary by client; this is a schema illustration, not a copy-paste config):
 
 ```json
 {
@@ -141,12 +165,21 @@ In your Codex project config (or any MCP client config). Note: `${CODEX_WEB_REVI
     "review-relay": {
       "url": "http://127.0.0.1:43127/mcp",
       "headers": {
-        "Authorization": "Bearer ${CODEX_WEB_REVIEW_RELAY_TOKEN}"
+        "Authorization": "Bearer <your-token>"
       }
     }
   }
 }
 ```
+
+**Verify connectivity** before triggering a review:
+
+```powershell
+$token = $env:CODEX_WEB_REVIEW_RELAY_TOKEN
+Invoke-WebRequest -Uri "http://127.0.0.1:43127/health" -Headers @{Authorization="Bearer $token"}
+```
+
+A `200 OK` with `{"status":"ok",...}` confirms the relay is reachable. If you get a connection error, the native host is not running — check that the extension is loaded and a ChatGPT tab is armed.
 
 ### 7. Create a handoff file and trigger a review
 
@@ -184,12 +217,26 @@ The relay fills the ChatGPT composer with a trigger envelope, clicks send, waits
 
 ### Job lifecycle
 
+Phases are grouped into three categories:
+
+| Category | Phases | Description |
+|----------|--------|-------------|
+| **Active** | `CREATED`, `DISPATCHED`, `USER_TURN_ACKED`, `ASSISTANT_STARTED` | Normal progression from dispatch to assistant response. |
+| **Recovery** | `SESSION_LOST`, `SEND_UNCERTAIN`, `RECONCILING` | Transient states during connection loss or send ambiguity. The relay automatically attempts reconciliation on the next `request_review` call for the same fingerprint. |
+| **Terminal** | `TURN_IDLE`, `MISMATCH`, `TIMEOUT`, `BLOCKED` | Final states. `request_review` returns immediately for terminal jobs. |
+
 ```
-CREATED -> DISPATCHED -> USER_TURN_ACKED -> ASSISTANT_STARTED -> TURN_IDLE (completed)
-                                                              \-> MISMATCH (terminal)
-                                                              \-> TIMEOUT (terminal)
-                                                              \-> BLOCKED (terminal)
+CREATED -> DISPATCHED -> USER_TURN_ACKED -> ASSISTANT_STARTED -> TURN_IDLE
+       \-> SESSION_LOST (recovery)       \-> RECONCILING (recovery)
+       \-> SEND_UNCERTAIN (recovery)
+       \-> MISMATCH (terminal)  \-> TIMEOUT (terminal)  \-> BLOCKED (terminal)
 ```
+
+**Returnable phases**: `request_review` may return any terminal phase plus `SESSION_LOST` and `SEND_UNCERTAIN` (when the wait slice expires before recovery completes). Callers should treat `SESSION_LOST` and `SEND_UNCERTAIN` as retriable — calling `request_review` again with the same handoff will trigger automatic reconciliation.
+
+**Same-fingerprint retry**: idempotent. If the job is still active, the call joins the existing wait. If terminal, the stored result is returned immediately.
+
+**Manual recovery**: only `recover_review(handoff_path, confirm_unsent=true)` can re-dispatch after a terminal `MISMATCH`. This is a one-shot, audited operation — use it only after confirming the original message was never sent.
 
 `TURN_IDLE` means the browser transport finished. The `assistant_output` field in the response contains the web reviewer's full reply text (with SHA-256 for integrity). If your workflow uses a GitHub PR comment as the formal record, your agent should additionally read the PR comment. If you rely on the relay channel alone, `assistant_output` is the verdict.
 
@@ -241,13 +288,23 @@ Given a `handoff_path` (repo-relative POSIX path), output a JSON object to stdou
 
 ### Minimal helper implementation
 
-See `scripts/tools/check_stage_gate_readiness.py relay-export` in the [producer repository](https://github.com/David-JA/single-crystal-stress) for a full reference implementation. The minimum contract:
+The native host invokes the helper as:
+
+```
+python <helperPath> relay-export <handoff_path>
+```
+
+The helper must output exactly one JSON object to stdout on success, or exit non-zero with a stable error message on stderr on failure.
+
+See `scripts/tools/check_stage_gate_readiness.py relay-export` in the [producer repository](https://github.com/David-JA/single-crystal-stress) for a full reference implementation. This repository also includes a minimal helper at `scripts/tools/relay_export_helper.py`. The minimum contract:
 
 1. Validate the handoff path matches `.agent/review_handoffs/pr-<N>/<stream>/round-<NN>-<kind>.md`.
 2. Verify the file is tracked, committed, and worktree matches HEAD.
-3. Read PR number, stream, round, kind from the path; read scope from the handoff frontmatter.
+3. Read PR number, stream, round, kind from the path; read scope from the handoff header fields (e.g. `Review scope:` line in the Markdown body).
 4. Compute SHA-256 hashes and output the JSON.
 5. Exit non-zero with a stable error code on any failure (fail closed).
+
+**Responsibility boundary**: the native host does **not** parse handoff Markdown — it only consumes the validated relay-export JSON from the helper. The repository-side helper is responsible for parsing handoff header fields, validating path/header consistency, checking Git state, and computing hashes.
 
 ### Handoff file format
 
@@ -267,7 +324,7 @@ Review scope: <what the reviewer should look at>
 <your content here>
 ```
 
-The relay does not parse the handoff body — it only hashes it. The trigger envelope sent to ChatGPT contains six dynamic fields (path, ref, head, stream, round, kind) and two fixed instructions: one directing the reviewer to execute the review based on pre-read context and respond in plain text, and one noting that publishing the verdict as a GitHub PR comment is optional — the relay returns the reviewer's response regardless of whether a PR comment is posted.
+The **native host** does not parse the handoff body — it only hashes the file and consumes the relay-export JSON produced by the helper. The **helper** is responsible for parsing and validating the handoff header fields. The trigger envelope sent to ChatGPT contains six dynamic fields (path, ref, head, stream, round, kind) and two fixed instructions: one directing the reviewer to execute the review based on pre-read context and respond in plain text, and one noting that publishing the verdict as a GitHub PR comment is optional — the relay returns the reviewer's response regardless of whether a PR comment is posted.
 
 ### Configuration
 
@@ -308,7 +365,8 @@ If you want similar structure, see:
 
 - **Localhost only**: server binds `127.0.0.1`; remote connections are rejected at the socket level.
 - **Bearer token**: 48-byte random token, stored in a user-local file with restricted ACL.
-- **No credentials stored**: the relay never holds GitHub tokens, cookies, or chat history.
+- **No credentials stored**: the relay never holds GitHub tokens, browser cookies, or full conversation history.
+- **Persisted data**: the SQLite job store (`stateDbPath`) saves transport job metadata, conversation identity, and the **last captured assistant response** (`assistant_output` + SHA-256) for each completed job. This is the web reviewer's reply text, not the full chat history. The database is deleted on uninstall.
 - **No conversation selection**: the relay cannot choose or switch conversations. You arm the current tab manually.
 - **Fail closed**: any validation failure (path escape, hash mismatch, detached HEAD, missing session) aborts before dispatch.
 
