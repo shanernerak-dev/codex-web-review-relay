@@ -161,6 +161,46 @@ test("DOM adapter keeps the last assistant message when one stable turn has mult
   assert.equal(adapter.rawTurnText(document, finalBubble), "reasoning summary\n\nfinal review output");
 });
 
+test("DOM adapter treats data-message-id as the stable turn identity across node replacement", () => {
+  const turnNode = (text: string) => node({
+    role: "assistant",
+    innerText: text,
+    getAttribute(name) {
+      if (name === "data-message-id") return "message-a";
+      if (name === "data-message-author-role") return "assistant";
+      return null;
+    },
+    closest(selector) { return selector === "[data-message-id]" ? this : null; },
+  });
+  const first = turnNode("partial");
+  const map = new Map<string, NodeLike[]>([["[data-message-author-role]", [first]]]);
+  const baseline = adapter.snapshotTurns(fakeDocument(map));
+  const replacement = turnNode("complete");
+  map.set("[data-message-author-role]", [replacement]);
+  assert.equal(adapter.newTurn(fakeDocument(map), baseline, "assistant"), null);
+  assert.equal(adapter.rawTurnText(fakeDocument(map), replacement), "complete");
+});
+
+test("DOM adapter preserves the order of multiple new assistant turns", () => {
+  const turnNode = (id: string, text: string) => node({
+    role: "assistant",
+    innerText: text,
+    getAttribute(name) {
+      if (name === "data-message-id") return id;
+      if (name === "data-message-author-role") return "assistant";
+      return null;
+    },
+    closest(selector) { return selector === "[data-message-id]" ? this : null; },
+  });
+  const first = turnNode("message-a", "first assistant turn");
+  const second = turnNode("message-b", "second assistant turn");
+  const map = new Map<string, NodeLike[]>([["[data-message-author-role]", [first, second]]]);
+  const document = fakeDocument(map);
+  const captured = adapter.newTurns(document, new Set(), "assistant");
+  assert.deepEqual(captured, [first, second]);
+  assert.equal(adapter.rawTurnText(document, captured), "first assistant turn\n\nsecond assistant turn");
+});
+
 test("DOM adapter rejects assistant candidates from distinct stable turns", () => {
   const inTurn = (turnId: string) => {
     const turn = node({getAttribute(name) { return name === "data-turn-id" ? turnId : null; }});

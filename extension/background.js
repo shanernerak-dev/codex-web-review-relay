@@ -128,9 +128,10 @@ async function arm() {
 }
 async function disarm() {
   return enqueueSessionOperation(async () => {
-    reconnectDisabled = true; if (reconnectTimer !== null) clearTimeout(reconnectTimer); reconnectTimer = null; clearHeartbeat();
     const saved = (await chrome.storage.local.get(SESSION_KEY))[SESSION_KEY];
     const current = armed ?? saved ?? null;
+    if (current?.activeJobId) throw new Error("ACTIVE_JOB_DISARM_FORBIDDEN");
+    reconnectDisabled = true; if (reconnectTimer !== null) clearTimeout(reconnectTimer); reconnectTimer = null; clearHeartbeat();
     armed = null; await chrome.storage.local.remove(SESSION_KEY);
     let disarmError = null;
     if (current?.sessionId) {
@@ -142,8 +143,15 @@ async function disarm() {
     return {armed: false};
   });
 }
-chrome.runtime.onMessage.addListener((message, _sender, respond) => {
-  if (message.kind === "LIFECYCLE") { sendLifecycle(message.type, message.jobId, message.errorCode, message.assistantOutput).then(() => respond({ok: true}), (error) => respond({ok: false, error: error.message})); return true; }
+chrome.runtime.onMessage.addListener((message, sender, respond) => {
+  if (message.kind === "LIFECYCLE") {
+    if (!armed) { respond({ok: false, errorCode: "SESSION_NOT_ARMED"}); return; }
+    if (sender?.tab?.id !== armed.tabId) { respond({ok: false, errorCode: "LIFECYCLE_SENDER_TAB_MISMATCH"}); return; }
+    if (armed.activeJobId !== message.jobId) { respond({ok: false, errorCode: "LIFECYCLE_JOB_MISMATCH"}); return; }
+    sendLifecycle(message.type, message.jobId, message.errorCode, message.assistantOutput)
+      .then(() => respond({ok: true}), (error) => respond({ok: false, errorCode: error.message}));
+    return true;
+  }
   if (message.kind === "POPUP_ARM") { arm().then((state) => respond({ok: true, state}), (error) => respond({ok: false, error: error.message})); return true; }
   if (message.kind === "POPUP_DISARM") { disarm().then((state) => respond({ok: true, state}), (error) => respond({ok: false, error: error.message})); return true; }
   if (message.kind === "POPUP_STATUS") respond({ok: true, state: armed ? {armed: true, sessionId: armed.sessionId, tabId: armed.tabId, activeJobId: armed.activeJobId, connection: armed.connection, bindingValid: armed.bindingValid, lastError: armed.lastError} : {armed: false}});

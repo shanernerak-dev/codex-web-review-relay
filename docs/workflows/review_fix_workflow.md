@@ -82,4 +82,4 @@ Stage 3 pilot authorization: Maintainer-authorized acceptance review; complete c
 
 - phase / 重试 / recover 语义：`docs/agent_conventions.md` §job 生命周期。
 - 路径正则 / relay-export schema / helper CLI：`docs/agent_conventions.md` §handoff 与 helper 合同。
-- 完成检测实现（输出稳定 + 页面空闲 / 时间兜底 + `sendLifecycle` 超时保护）：`extension/content.js`，维护扩展时读。
+- 完成检测实现（turn identity、增量输出稳定、turn-level completion evidence、native ACK 与 `sendLifecycle` 失败重试）：`extension/dom-adapter.js` + `extension/content.js`，维护扩展时读。

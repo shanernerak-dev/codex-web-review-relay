@@ -46,15 +46,32 @@
       return normalizedText(current) === text.trim() ? current : null;
     }, "COMPOSER_READBACK_MISMATCH");
   }
-  function snapshotTurns(document) { return new Set(Array.from(document.querySelectorAll(TURN_SELECTOR))); }
+  function snapshotTurns(document) {
+    const snapshot = new Set(Array.from(document.querySelectorAll(TURN_SELECTOR)));
+    snapshot.turnIdentities = new Set(Array.from(snapshot).map(stableTurnIdentity).filter((identity) => typeof identity === "string"));
+    return snapshot;
+  }
   function turns(document) { return Array.from(document.querySelectorAll(TURN_SELECTOR)); }
   function stableTurnIdentity(node) {
-    const byId = node?.closest?.("[data-turn-id]") ?? null;
-    const turnId = byId?.getAttribute?.("data-turn-id");
-    if (turnId) return `turn-id:${turnId}`;
-    const numbered = node?.closest?.("[data-testid^='conversation-turn-']") ?? null;
-    const testId = numbered?.getAttribute?.("data-testid");
-    if (testId && testId !== "conversation-turn") return `testid:${testId}`;
+    const containers = [
+      node?.closest?.("[data-turn-id]") ?? null,
+      node?.closest?.("[data-message-id]") ?? null,
+      node?.closest?.("[data-testid^='conversation-turn-']") ?? null,
+      node?.closest?.("[data-testid='conversation-turn']") ?? null,
+      node?.closest?.("[id]") ?? null,
+    ].filter(Boolean);
+    for (const container of containers) {
+      const turnId = container.getAttribute?.("data-turn-id");
+      if (turnId) return `turn-id:${turnId}`;
+      const messageId = container.getAttribute?.("data-message-id");
+      if (messageId) return `message-id:${messageId}`;
+      const testId = container.getAttribute?.("data-testid");
+      if (testId && testId !== "conversation-turn") return `testid:${testId}`;
+      const elementId = container.getAttribute?.("id");
+      if (elementId) return `id:${elementId}`;
+    }
+    // A generic conversation-turn has no cross-render stable key. Keep its node
+    // identity for the current DOM pass, but do not pretend it survives a rerender.
     return node?.closest?.("[data-testid='conversation-turn']") ?? null;
   }
   function oneAssistantTurn(matches) {
@@ -64,6 +81,15 @@
     throw new Error("TURN_IDENTITY_AMBIGUOUS:assistant");
   }
   function rawTurnText(document, node) {
+    if (Array.isArray(node)) {
+      const seen = [];
+      return node.filter((candidate) => {
+        const identity = stableTurnIdentity(candidate);
+        if (identity !== null && seen.some((prior) => prior === identity)) return false;
+        seen.push(identity);
+        return true;
+      }).map((candidate) => rawTurnText(document, candidate)).filter((text) => text.length > 0).join("\n\n").trim();
+    }
     const identity = stableTurnIdentity(node);
     if (identity === null) return rawText(node);
     const parts = Array.from(document.querySelectorAll(TURN_SELECTOR))
@@ -79,6 +105,16 @@
       ?? node;
   }
   function isAssistantComplete(document, node) {
+    if (Array.isArray(node)) {
+      const seen = [];
+      const uniqueNodes = node.filter((candidate) => {
+        const identity = stableTurnIdentity(candidate);
+        if (identity !== null && seen.some((prior) => prior === identity)) return false;
+        seen.push(identity);
+        return true;
+      });
+      return uniqueNodes.length > 0 && uniqueNodes.every((candidate) => isAssistantComplete(document, candidate));
+    }
     const container = turnContainer(node);
     if (!container?.querySelector) return false;
     if (container.querySelector("[data-testid='copy-turn-action-button'], [data-testid='copy-message-button']")) return true;
@@ -86,8 +122,25 @@
     if (!copyButton) return false;
     return !copyButton.closest?.("pre, code, [data-testid*='code'], [class*='code']");
   }
+  function isBaselineTurn(node, baseline) {
+    if (baseline?.has?.(node)) return true;
+    const identity = stableTurnIdentity(node);
+    return typeof identity === "string" && baseline?.turnIdentities?.has?.(identity) === true;
+  }
+  function newTurns(document, baseline, role, exactText) {
+    const records = [];
+    for (const node of Array.from(document.querySelectorAll(TURN_SELECTOR))) {
+      if (isBaselineTurn(node, baseline) || node.getAttribute("data-message-author-role") !== role) continue;
+      if (exactText !== undefined && normalizedText(node) !== exactText.trim()) continue;
+      const identity = stableTurnIdentity(node);
+      const record = identity === null ? null : records.find((candidate) => candidate.identity === identity);
+      if (record) record.nodes.push(node);
+      else records.push({identity, nodes: [node]});
+    }
+    return records.map((record) => record.nodes[record.nodes.length - 1]);
+  }
   function newTurn(document, baseline, role, exactText) {
-    const matches = Array.from(document.querySelectorAll(TURN_SELECTOR)).filter((node) => !baseline.has(node) && node.getAttribute("data-message-author-role") === role && (exactText === undefined || normalizedText(node) === exactText.trim()));
+    const matches = Array.from(document.querySelectorAll(TURN_SELECTOR)).filter((node) => !isBaselineTurn(node, baseline) && node.getAttribute("data-message-author-role") === role && (exactText === undefined || normalizedText(node) === exactText.trim()));
     if (role === "assistant") return oneAssistantTurn(matches);
     if (matches.length > 1) throw new Error(`TURN_IDENTITY_AMBIGUOUS:${role}`);
     return matches[0] ?? null;
@@ -145,5 +198,5 @@
     try { composer(document); return true; }
     catch { return false; }
   }
-  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, isAssistantComplete, writeComposer, snapshotTurns, newTurn, turns, dispatch, reconcile, resumeDraft, isGenerating, isResponseIdle, isIdle};
+  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, isAssistantComplete, writeComposer, snapshotTurns, newTurn, newTurns, turns, dispatch, reconcile, resumeDraft, isGenerating, isResponseIdle, isIdle};
 })(globalThis);

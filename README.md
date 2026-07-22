@@ -154,6 +154,8 @@ The extension ID is fixed: `kkdijpckhlminpolkllmmkldlljakfem`.
 2. Click the extension icon and click **Arm**.
 3. The popup confirms the session is armed and shows connection status.
 
+During a review, the extension tracks the assistant response by the ChatGPT turn identity and incrementally harvests updates, rather than treating whichever assistant bubble is currently newest as the result. Do not click **Disarm** while a review is active; the popup returns `ACTIVE_JOB_DISARM_FORBIDDEN` until the job reaches a terminal or recovery state. A `TURN_IDLE` result is sent only after the target turn is complete and the native host acknowledges receipt.
+
 ### 6. Connect your MCP client
 
 > **Important**: the installer sets a **user-level** environment variable (`CODEX_WEB_REVIEW_RELAY_TOKEN`). Already-running terminals, IDEs, or Codex sessions will **not** see it until you open a new terminal or restart the client.

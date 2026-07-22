@@ -22,6 +22,7 @@ function harness(ackDelayMs = 0) {
   let assistantComplete = false;
   let codeCopy = false;
   let generating = false;
+  let turnIdleAckFailures = 0;
   const runtimeListeners: Array<(message: any, sender: any, respond: (value: any) => void) => boolean | void> = [];
   let observerCallback: (() => void) | null = null;
   class MutationObserver {
@@ -50,6 +51,7 @@ function harness(ackDelayMs = 0) {
         events.push(message.type);
         lifecycleMessages.push(message);
         if (ackDelayMs) await new Promise((resolveWait) => setTimeout(resolveWait, ackDelayMs));
+        if (message.type === "TURN_IDLE" && turnIdleAckFailures > 0) { turnIdleAckFailures -= 1; return {ok: false, errorCode: "NATIVE_NOT_READY"}; }
         return {ok: true};
       },
       onMessage: {addListener(listener: any) { runtimeListeners.push(listener); }},
@@ -106,6 +108,7 @@ function harness(ackDelayMs = 0) {
     setAssistantComplete(value: boolean) { assistantComplete = value; },
     setAssistantCodeCopy(value: boolean) { codeCopy = value; },
     setGenerating(value: boolean) { generating = value; },
+    failNextTurnIdleAcks(value: number) { turnIdleAckFailures = value; },
   };
 }
 
@@ -247,6 +250,19 @@ test("relay-only direct fast completion does not require an observed generating 
   h.mutate();
   await waitFor(() => h.events.includes("TURN_IDLE"), 7_000);
   assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "fast complete formal verdict");
+});
+
+test("content monitor retries TURN_IDLE after a rejected native ACK", async () => {
+  const h = harness();
+  assert.equal((await h.dispatch(9_000, "relay-only")).ok, true);
+  h.setUser(true);
+  h.setAssistant(true);
+  h.setAssistantOutput("formal verdict after retry");
+  h.setAssistantComplete(true);
+  h.failNextTurnIdleAcks(1);
+  h.mutate();
+  await waitFor(() => h.lifecycleMessages.filter((entry) => entry.type === "TURN_IDLE").length >= 2, 7_000);
+  assert.equal(h.lifecycleMessages.at(-1)?.assistantOutput, "formal verdict after retry");
 });
 
 test("expired dispatch and recovery fail before any DOM write or click", async () => {

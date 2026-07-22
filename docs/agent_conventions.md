@@ -58,7 +58,8 @@
 - **可返回 phase**：terminal + `SESSION_LOST` + `SEND_UNCERTAIN`（等待切片在 recovery 完成前超时）。后两者视为可重试。
 - **同 fingerprint 重试幂等**：active 则加入现有等待；terminal 则立即返回存储结果。
 - **手动恢复**：仅 `recover_review(handoff_path, confirm_unsent=true)` 可在 terminal `MISMATCH` 后重 dispatch，一次性，须确认原消息未发送。
-- **`TURN_IDLE`**：表示浏览器 transport completion。PR mode 的 `assistant_output` 只应是非空短确认，formal verdict 必须从目标 PR comment readback；commit-only relay-only mode 的 `assistant_output` 是正式结论，且只能在当前 assistant turn 存在可在 reconnect 后复核的完成证据（例如该 turn 的 copy action）后 terminalize。仅观察到一段稳定文本、或曾经观察到 generating，都不是充分证据。
+- **`TURN_IDLE`**：表示浏览器 transport completion。PR mode 的 `assistant_output` 只应是非空短确认，formal verdict 必须从目标 PR comment readback；commit-only relay-only mode 的 `assistant_output` 是正式结论，且只能在 dispatch 后新增 assistant turn 已按稳定 DOM identity 完整 harvest、存在可在 reconnect 后复核的 turn-level completion evidence（例如该 turn 的 copy action）、内容保持稳定，并收到 native ACK 后 terminalize。仅观察到一段稳定文本、或曾经观察到 generating，都不是充分证据。`assistant_output_sha256` 仅用于完整性与重试审计，不替代 turn identity。
+- **active job 期间禁止 Disarm**：extension popup 在 `activeJobId` 存在时必须以稳定错误 `ACTIVE_JOB_DISARM_FORBIDDEN` 拒绝 Disarm，不能清除 session 或让 native host 丢失 lifecycle；应等待 job 进入 terminal/recovery 后再 Disarm。content script 收到 lifecycle `{ok:false}` 时不得停止 observer，必须继续重试或进入 recovery。
 
 ## 文档同步
 

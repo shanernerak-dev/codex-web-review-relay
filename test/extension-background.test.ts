@@ -61,13 +61,14 @@ function harness() {
   const context = vm.createContext({chrome, crypto: webcrypto, TextEncoder, Error, Promise, Math, Date, setTimeout, clearTimeout, setInterval, clearInterval});
   vm.runInContext(readFileSync(resolve("extension/background.js"), "utf8"), context, {filename: "background.js"});
 
-  async function runtime(message: any): Promise<any> {
+  async function runtime(message: any, senderTabId: number | null = message.kind === "LIFECYCLE" ? 7 : null): Promise<any> {
     const listener = runtimeMessages.listeners[0];
     return new Promise((resolveResponse, rejectResponse) => {
       let responded = false;
       const respond = (value: any) => { responded = true; resolveResponse(value); };
       try {
-        const asynchronous = listener(message, {}, respond);
+        const sender = senderTabId === null ? {} : {tab: {id: senderTabId}};
+        const asynchronous = listener(message, sender, respond);
         if (asynchronous !== true && !responded) resolveResponse(undefined);
       } catch (error) { rejectResponse(error); }
     });
@@ -148,6 +149,35 @@ test("disarm clears the native session even when the extension port is disconnec
   const replacementArm = h.ports[2].messages.find((message) => message.type === "ARM_SESSION");
   h.respondTo(h.ports[2], replacementArm, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
   assert.equal((await rearmResult).ok, true);
+});
+
+test("disarm refuses to clear a session while a review job is active", async () => {
+  const h = harness();
+  const armResult = h.runtime({kind: "POPUP_ARM"});
+  await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
+  const nativePort = h.ports[0];
+  const armRequest = nativePort.messages.find((message) => message.type === "ARM_SESSION");
+  h.respondTo(nativePort, armRequest, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
+  await armResult;
+
+  await nativePort.onMessage.emit({
+    schemaVersion: {major: 1, minor: 0}, type: "DISPATCH_TRIGGER", requestId: "dispatch-active",
+    sessionId: armRequest.sessionId, jobId: "job-active", envelope: "Path: x", deadline: new Date(Date.now() + 10_000).toISOString(),
+  });
+  await waitFor(() => nativePort.messages.some((message) => message.type === "DISPATCH_TRIGGER_ACCEPTED"));
+
+  const disarm = await h.runtime({kind: "POPUP_DISARM"});
+  assert.equal(disarm.ok, false);
+  assert.equal(disarm.error, "ACTIVE_JOB_DISARM_FORBIDDEN");
+  assert.equal(nativePort.messages.some((message) => message.type === "DISARM_SESSION"), false);
+  assert.equal((await h.runtime({kind: "POPUP_STATUS"})).state.activeJobId, "job-active");
+
+  const wrongTab = await h.runtime({kind: "LIFECYCLE", type: "TURN_IDLE", jobId: "job-active", assistantOutput: "ignored"}, 99);
+  assert.equal(wrongTab.ok, false);
+  assert.equal(wrongTab.errorCode, "LIFECYCLE_SENDER_TAB_MISMATCH");
+  const wrongJob = await h.runtime({kind: "LIFECYCLE", type: "TURN_IDLE", jobId: "other-job", assistantOutput: "ignored"});
+  assert.equal(wrongJob.ok, false);
+  assert.equal(wrongJob.errorCode, "LIFECYCLE_JOB_MISMATCH");
 });
 
 test("same-tab conversation navigation invalidates the armed binding", async () => {

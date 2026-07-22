@@ -152,6 +152,8 @@ Native host 以 `python <helperPath> relay-export <handoff_path>` 形式调用 h
 2. 点击扩展图标，点击 **Arm**。
 3. 弹窗确认会话已 Arm，并显示连接状态。
 
+评审期间，扩展会按 ChatGPT turn identity 增量提取目标 assistant 回复，而不是把当前页面上“最新的 assistant bubble”直接当作结果。评审 active 时不要点击 **Disarm**；在 job 进入 terminal 或 recovery 前，弹窗会返回 `ACTIVE_JOB_DISARM_FORBIDDEN`。只有目标 turn 完成且 native host 确认收到后，才会发送 `TURN_IDLE`。
+
 ### 6. 连接你的 MCP 客户端
 
 > **重要**：安装器设置的是**用户级**环境变量（`CODEX_WEB_REVIEW_RELAY_TOKEN`）。已运行的终端、IDE 或 Codex 会话**不会**自动获取该变量——你需要打开新终端或重启客户端。
