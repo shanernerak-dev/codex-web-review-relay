@@ -14,6 +14,7 @@ type NodeLike = {
   focus(): void;
   dispatchEvent(): void;
   click(): void;
+  querySelector?(selector: string): NodeLike | null;
   getClientRects?(): ArrayLike<unknown>;
   closest?(selector: string): NodeLike | null;
 };
@@ -197,6 +198,20 @@ test("DOM adapter recognizes completed turns when the empty composer has no send
   assert.equal(adapter.isIdle(document), true);
   map.set("[data-testid='stop-button']", [node()]);
   assert.equal(adapter.isIdle(document), false);
+});
+
+test("DOM adapter uses a copy action inside the assistant turn as completion evidence", () => {
+  const copy = node();
+  const turn = node({
+    querySelector(selector) {
+      return selector.includes("aria-label^='Copy'") ? copy : null;
+    },
+  });
+  const assistant = node({closest(selector) { return selector === "[data-testid='conversation-turn']" ? turn : null; }});
+  const document = fakeDocument(new Map());
+  assert.equal(adapter.isAssistantComplete(document, assistant), true);
+  const incomplete = node({closest(selector) { return selector === "[data-testid='conversation-turn']" ? node() : null; }});
+  assert.equal(adapter.isAssistantComplete(document, incomplete), false);
 });
 
 test("DOM adapter reconciles existing user turn or one exact unsent draft", async () => {

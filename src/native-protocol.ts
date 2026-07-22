@@ -143,8 +143,7 @@ export class NativeBridge {
     reviewMode?: "pr-comment" | "relay-only";
     deadline: string;
   }): NativeRecord {
-    const session = this.requireSession(input.sessionId);
-    this.requireReviewModeCapability(session, input.reviewMode ?? "pr-comment");
+    this.assertReviewModeSupported(input.sessionId, input.reviewMode ?? "pr-comment");
     const job = this.coordinator.store.getJob(input.jobId);
     if (job.phase !== "CREATED" || job.fingerprint !== input.fingerprint) {
       throw new Error("DISPATCH_PRECONDITION_FAILED");
@@ -176,8 +175,7 @@ export class NativeBridge {
     deadline: string;
     allowUnsentSend: boolean;
   }): NativeRecord {
-    const session = this.requireSession(input.sessionId);
-    this.requireReviewModeCapability(session, input.reviewMode ?? "pr-comment");
+    this.assertReviewModeSupported(input.sessionId, input.reviewMode ?? "pr-comment");
     const job = this.coordinator.store.getJob(input.jobId);
     if (job.phase !== "RECONCILING" || job.fingerprint !== input.fingerprint) throw new Error("RECONCILE_PRECONDITION_FAILED");
     return {
@@ -229,6 +227,10 @@ export class NativeBridge {
     const session = this.coordinator.store.getActiveSession();
     if (!session || session.session_id !== sessionId) throw new Error("SESSION_NOT_ARMED");
     return session;
+  }
+
+  assertReviewModeSupported(sessionId: string, reviewMode: "pr-comment" | "relay-only"): void {
+    this.requireReviewModeCapability(this.requireSession(sessionId), reviewMode);
   }
 
   private requireReviewModeCapability(session: StoredSession, reviewMode: "pr-comment" | "relay-only"): void {

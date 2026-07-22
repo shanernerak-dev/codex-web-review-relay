@@ -19,6 +19,7 @@ function harness(ackDelayMs = 0) {
   let user = false;
   let assistant = false;
   let assistantOutput = "final review output";
+  let assistantComplete = false;
   let generating = false;
   const runtimeListeners: Array<(message: any, sender: any, respond: (value: any) => void) => boolean | void> = [];
   let observerCallback: (() => void) | null = null;
@@ -31,10 +32,13 @@ function harness(ackDelayMs = 0) {
     pageSupported: () => true,
     dispatch: () => { calls.dispatch += 1; return {baseline: new Set()}; },
     resumeDraft: () => { calls.resumeDraft += 1; return {baseline: new Set()}; },
-    reconcile: () => ({state: "missing", baseline: new Set()}),
+    reconcile: () => user
+      ? {state: "user-present", assistant: assistant ? {innerText: assistantOutput} : null, baseline: new Set()}
+      : {state: "missing", baseline: new Set()},
     newTurn: (_document: unknown, _baseline: Set<unknown>, role: string) => role === "user" ? (user ? {} : null) : (assistant ? {innerText: "final review output"} : null),
     rawText: (node: any) => node?.innerText ?? "",
     rawTurnText: (_document: unknown, _node: any) => assistantOutput,
+    isAssistantComplete: () => assistantComplete,
     isGenerating: () => generating,
     isResponseIdle: () => !generating,
     isIdle: () => { throw new Error("COMPOSER_NOT_REQUIRED_FOR_RESPONSE_IDLE"); },
@@ -98,6 +102,7 @@ function harness(ackDelayMs = 0) {
     setUser(value: boolean) { user = value; },
     setAssistant(value: boolean) { assistant = value; },
     setAssistantOutput(value: string) { assistantOutput = value; },
+    setAssistantComplete(value: boolean) { assistantComplete = value; },
     setGenerating(value: boolean) { generating = value; },
   };
 }
@@ -137,6 +142,7 @@ test("content monitor waits for the complete stable output after a partial bubbl
   await new Promise((resolveWait) => setTimeout(resolveWait, 800));
   assert.equal(h.events.includes("TURN_IDLE"), false);
   h.setAssistantOutput("Stage C Runtime Follow-up Round complete");
+  h.setAssistantComplete(true);
   h.mutate();
   await waitFor(() => h.events.includes("TURN_IDLE"), 5_500);
   assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "Stage C Runtime Follow-up Round complete");
@@ -151,6 +157,7 @@ test("relay-only monitor waits for a long response without requiring composer id
   h.mutate();
   await waitFor(() => h.events.includes("ASSISTANT_STARTED"));
   h.setAssistantOutput("A long formal verdict that is returned directly through assistant_output");
+  h.setAssistantComplete(true);
   h.setGenerating(false);
   h.mutate();
   await waitFor(() => h.events.includes("TURN_IDLE"), 7_000);
@@ -186,10 +193,46 @@ test("relay-only monitor can resume after a long stable partial bubble", async (
   h.mutate();
   await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   h.setAssistantOutput("complete formal verdict after a delayed generation phase");
+  h.setAssistantComplete(true);
   h.setGenerating(false);
   h.mutate();
   await waitFor(() => h.events.includes("TURN_IDLE"), 7_000);
   assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "complete formal verdict after a delayed generation phase");
+});
+
+test("relay-only reconcile completes an already-complete assistant reply", async () => {
+  const h = harness();
+  h.setUser(true);
+  h.setAssistant(true);
+  h.setAssistantComplete(true);
+  h.setAssistantOutput("complete reply recovered after reconnect");
+  assert.equal((await h.reconcile(9_000)).ok, true);
+  await waitFor(() => h.events.includes("TURN_IDLE"), 7_000);
+  assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "complete reply recovered after reconnect");
+});
+
+test("relay-only reconcile does not complete a partial assistant bubble without completion evidence", async () => {
+  const h = harness();
+  h.setUser(true);
+  h.setAssistant(true);
+  h.setAssistantComplete(false);
+  h.setAssistantOutput("partial reply recovered after reconnect");
+  assert.equal((await h.reconcile(1_200)).ok, true);
+  await waitFor(() => h.events.includes("TURN_TIMEOUT"), 2_500);
+  assert.equal(h.events.includes("TURN_IDLE"), false);
+});
+
+test("relay-only direct fast completion does not require an observed generating phase", async () => {
+  const h = harness();
+  assert.equal((await h.dispatch(9_000, "relay-only")).ok, true);
+  h.setUser(true);
+  h.setAssistant(true);
+  h.setAssistantOutput("fast complete formal verdict");
+  h.setAssistantComplete(true);
+  h.setGenerating(false);
+  h.mutate();
+  await waitFor(() => h.events.includes("TURN_IDLE"), 7_000);
+  assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "fast complete formal verdict");
 });
 
 test("expired dispatch and recovery fail before any DOM write or click", async () => {

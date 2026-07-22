@@ -18,6 +18,19 @@ test("v1.0 is limited to PR paths while v1.1 supports commit-only paths", () => 
   })), /RELAY_COMMIT_SCHEMA_MINOR_UNSUPPORTED/);
 });
 
+test("relay target identity must exactly match the handoff path", () => {
+  for (const relay of [
+    relayFixture({target_pr: 42, target_id: "pr-42"}),
+    relayFixture({schema_version: {major: 1, minor: 1}, target_pr: 42, target_id: "pr-42"}),
+    relayFixture({
+      schema_version: {major: 1, minor: 1}, target_kind: "commit", target_id: "review-beta", target_pr: null,
+      handoff_path: ".agent/review_handoffs/review-alpha/main/round-01-review-request.md",
+    }),
+  ]) {
+    assert.throws(() => validateRelayExport(relay), /RELAY_TARGET_PATH_MISMATCH/);
+  }
+});
+
 test("relay export fails closed on unknown major and scope drift", () => {
   assert.throws(
     () => validateRelayExport(relayFixture({schema_version: {major: 2, minor: 0}})),

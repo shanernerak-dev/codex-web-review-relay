@@ -10,7 +10,8 @@
 - Stage 2 review gate：`stage2-main/round-02` 在 reviewed head `7d7eacb46adf96f09ccbe1f9a8b0a2019c6146be` 返回 `PASS`，`RGEN-S2-001` / `RGEN-S2-004` 为 `ACCEPTED`，既有 `RGEN-S2-002` / `RGEN-S2-003` 保持锁定；`round-03` 的 producer compatibility evidence amendment 也返回 `PASS`。
 - Stage 2 acceptance：Maintainer 于 2026-07-22 明确批准进入 Stage 3。该 acceptance 不等同于 Stage 3 acceptance、Ready、merge authorization 或 producer Issue closeout。
 - Stage 3 round-01 review：reviewed head `4e77def8253c013e1911c1630060a32f20390867` 返回 `REQUEST CHANGES`，`RGEN-S3-001` 至 `RGEN-S3-005` 已记录；该 handoff 保持 append-only。
-- Stage 3 canonical review identity：`stage3-main/round-02-review-fix`，reviewed head `4bb6ed678f63378442ac3c7e33fa1d876fa2050c`；Stage 3 round 独立从 `round-01` 计数，当前 round-02 等待复审，尚未 acceptance。
+- Stage 3 round-02 review：reviewed head `981c7ce` 返回 `REQUEST CHANGES`；`RGEN-S3-001` / `RGEN-S3-005` 已 `ACCEPTED`，`RGEN-S3-002` / `RGEN-S3-003` / `RGEN-S3-004` / `RGEN-S3-006` 保持开放。
+- Stage 3 canonical review identity：`stage3-main/round-02-review-fix`，reviewed head `4bb6ed678f63378442ac3c7e33fa1d876fa2050c`；Stage 3 round 独立从 `round-01` 计数，round-02 已复审但尚未 acceptance。
 - 跨仓库适配跟踪：producer `David-JA/single-crystal-stress#44`，用于记录本仓库 generic helper/config 变化对 single-crystal 现有使用方式的影响，并在本 PR 收尾后完成 producer-side readback。
 - Producer-side readback：已使用 producer 当前 `scripts/tools/check_stage_gate_readiness.py` 对历史 tracked handoff 做 v1.0 relay-export readback，exit code `0`；证据与迁移命令已记录在 Issue #44 comment `5045654662`。当前 producer checkout 无 active handoff，Issue 保持 open，等待未来 live handoff 与 companion PR closeout。
 - 关联 PR：本 spec 与全部 stage 改动进入同一个 PR（Stage 1 段 2 创建）。**Stage 3 完成且 README/contract 重新对齐前，PR 必须保持 Draft 状态，禁止 merge。**
@@ -59,10 +60,10 @@
 
 ## 关键不变量（跨 stage 必须保持）
 
-- trigger envelope 仅含 6 个动态定位字段 + 固定指令，**绝不内嵌 handoff 正文**；reviewer 凭 `Path` 与 `reviewed head` 在远端读 commit / handoff。开源仓库经 commit 取证是不可动摇的基础。
+- PR trigger envelope 仅含 6 个动态定位字段 + 固定指令；commit-only envelope 在此基础上增加 `target_kind` / `target_id`。两种 envelope 都**绝不内嵌 handoff 正文**；reviewer 凭 locator 与 `reviewed head` 在远端读 commit / handoff。开源仓库经 commit 取证是不可动摇的基础。
 - PR 模式下，`target_pr` 必须指向**当前 open、正在审的 PR**，`reviewed_head` 落在该 PR 的 diff 作用域内；不得指向已 merge 的 PR。commit-only 模式不要求 `target_pr` 或 open PR，但必须使用已定义的 `target_kind` / `target_id` contract，并以 `full_ref` + `reviewed_head` 完成远端取证。PR 状态和 PR-head equality 检查属于 **caller-side orchestration preflight**（由 Repo Agent 在触发 `request_review` 前经 GitHub API 独立验证），不是 native host / helper / transport 的 fail-closed 不变量。
 - fail-closed（transport 层）：path escape / hash mismatch / detached HEAD / 缺 session，均中止于 dispatch 前。
-- `TURN_IDLE` 只描述 transport 完成；在 Stage 3 relay-only contract 完成并验收前，Stage 1/Stage 2 的 v1 PR-comment mode 以 GitHub readback 为 formal verdict 来源；Stage 3 无 PR 模式完成验收后才以 `assistant_output` 为准（由 conventions 明确，不混淆）。
+- `TURN_IDLE` 只描述 transport 完成；Stage 1/Stage 2 的 v1 PR-comment mode 以 GitHub readback 为 formal verdict 来源。当前 Stage 3 acceptance review 由 Maintainer 明确授权 commit-only pilot 使用完整 `assistant_output` 作为本轮验收的 formal source；该 pilot 不代表一般可用性，只有 Stage 3 acceptance 后才成为对外契约。
 - v1 PR 模式的 handoff 路径正则、relay-export 字段与 `scope_sha256 == sha256(canonical_json(normalized_scope))` 约束保持兼容；Stage 3 为 commit-only 模式增加对应的路径形态、target identity 字段和 schema version 规则。
 
 ## 授权与轮次（按 Stage 独立计数；对齐 producer，不写无条件硬上限）

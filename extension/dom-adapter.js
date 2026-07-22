@@ -72,6 +72,19 @@
       .filter((text) => text.length > 0);
     return (parts.length > 0 ? parts.join("\n\n") : rawText(node)).trim();
   }
+  function turnContainer(node) {
+    return node?.closest?.("[data-turn-id]")
+      ?? node?.closest?.("[data-testid^='conversation-turn-']")
+      ?? node?.closest?.("[data-testid='conversation-turn']")
+      ?? node;
+  }
+  function isAssistantComplete(document, node) {
+    const container = turnContainer(node);
+    if (!container?.querySelector) return false;
+    return Boolean(container.querySelector(
+      "[data-testid='copy-turn-action-button'], [data-testid='copy-message-button'], button[aria-label^='Copy'], button[aria-label^='复制']",
+    ));
+  }
   function newTurn(document, baseline, role, exactText) {
     const matches = Array.from(document.querySelectorAll(TURN_SELECTOR)).filter((node) => !baseline.has(node) && node.getAttribute("data-message-author-role") === role && (exactText === undefined || normalizedText(node) === exactText.trim()));
     if (role === "assistant") return oneAssistantTurn(matches);
@@ -131,5 +144,5 @@
     try { composer(document); return true; }
     catch { return false; }
   }
-  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, writeComposer, snapshotTurns, newTurn, turns, dispatch, reconcile, resumeDraft, isGenerating, isResponseIdle, isIdle};
+  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, isAssistantComplete, writeComposer, snapshotTurns, newTurn, turns, dispatch, reconcile, resumeDraft, isGenerating, isResponseIdle, isIdle};
 })(globalThis);

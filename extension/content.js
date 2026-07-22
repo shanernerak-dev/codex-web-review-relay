@@ -51,7 +51,8 @@
             }
             const quiet = now - Math.max(lastMutationAt, assistantStartedAt) >= quietIdleMs;
             const stable = candidateOutput.length > 0 && now - candidateOutputSince >= outputStabilityMs;
-            const completionObserved = relayOnly ? observedGenerating : (observedGenerating || now - assistantStartedAt >= outputStabilityMs);
+            const completedEvidence = typeof adapter.isAssistantComplete === "function" && adapter.isAssistantComplete(document, assistantNode);
+            const completionObserved = relayOnly ? completedEvidence : (observedGenerating || now - assistantStartedAt >= outputStabilityMs);
             if (quiet && stable && completionObserved) { await sendLifecycle("TURN_IDLE", job, null, candidateOutput); finish(); }
           }
         } while (inspectPending && !settled);

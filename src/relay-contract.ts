@@ -71,9 +71,10 @@ export function validateRelayExport(value: unknown): RelayExport {
   requireString({target_id: targetId}, "target_id", inferredKind === "pr" ? /^pr-[1-9][0-9]*$/ : /^review-[a-z0-9][a-z0-9-]*$/);
   const targetPr = record.target_pr === undefined ? (inferredKind === "pr" ? Number(pathMatch[1]) : null) : record.target_pr;
   if (inferredKind === "pr") {
-    if (!Number.isInteger(targetPr) || (targetPr as number) < 1 || targetId !== `pr-${targetPr}`) throw new Error("RELAY_EXPORT_INVALID:target_pr");
-  } else if (targetPr !== null) {
-    throw new Error("RELAY_EXPORT_INVALID:target_pr");
+    const pathTargetPr = Number(pathMatch[1]);
+    if (!Number.isInteger(targetPr) || (targetPr as number) < 1 || targetPr !== pathTargetPr || targetId !== `pr-${pathTargetPr}`) throw new Error("RELAY_TARGET_PATH_MISMATCH");
+  } else if (targetPr !== null || targetId !== `review-${pathMatch[2]}`) {
+    throw new Error("RELAY_TARGET_PATH_MISMATCH");
   }
   requireString(record, "handoff_sha256", /^[0-9a-f]{64}$/);
   requireString(record, "full_ref", /^refs\/heads\/[A-Za-z0-9._/-]+$/);

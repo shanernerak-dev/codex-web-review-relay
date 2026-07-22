@@ -102,6 +102,29 @@ export class ReviewTransportService {
     return this.coordinator.transition(job.job_id, "TIMEOUT", "TURN_DEADLINE_EXCEEDED");
   }
 
+  private relayOnlySupported(sessionId: string): boolean {
+    try {
+      this.bridge.assertReviewModeSupported(sessionId, "relay-only");
+      return true;
+    } catch (error) {
+      if (error instanceof Error && error.message === "RELAY_ONLY_EXTENSION_UNSUPPORTED") return false;
+      throw error;
+    }
+  }
+
+  private persistedTargetKind(job: StoredJob): RelayExport["target_kind"] {
+    if (typeof job.relay_json === "string" && job.relay_json.length > 0) {
+      try { return validateRelayExport(JSON.parse(job.relay_json)).target_kind; } catch { /* use path */ }
+    }
+    return job.handoff_path.includes("/review-") ? "commit" : "pr";
+  }
+
+  private cleanupUnsupportedActiveCommit(active: StoredJob, relay: RelayExport, sessionId: string): void {
+    if (relay.target_kind !== "pr" || this.persistedTargetKind(active) !== "commit") return;
+    if (this.relayOnlySupported(sessionId)) return;
+    this.coordinator.transition(active.job_id, "BLOCKED", "RELAY_ONLY_EXTENSION_UNSUPPORTED");
+  }
+
   async requestReview(handoffPath: string): Promise<TransportStatus> {
     const relay = await this.exportRelay(this.config, handoffPath);
     const fingerprint = relayFingerprint(relay);
@@ -121,6 +144,11 @@ export class ReviewTransportService {
     const historicalRelay = validateRelayExport(this.store.getRelayExport(persisted.job_id));
     const fingerprint = persisted.fingerprint;
     if (relayFingerprint(historicalRelay) !== fingerprint) throw new Error("STORED_JOB_IDENTITY_MISMATCH");
+    if (historicalRelay.target_kind === "commit") {
+      const session = this.store.getActiveSession();
+      if (!session) throw new Error("SESSION_NOT_ARMED");
+      this.bridge.assertReviewModeSupported(session.session_id, "relay-only");
+    }
     this.store.authorizeManualRecovery(persisted.job_id);
     this.reconciledJobs.delete(persisted.job_id);
     return this.requestReviewResolved(historicalRelay, fingerprint);
@@ -129,7 +157,7 @@ export class ReviewTransportService {
   private async requestReviewResolved(relay: RelayExport, fingerprint: string): Promise<TransportStatus> {
     const active = this.store.getActiveJob();
     if (active) this.expirePastDeadline(active);
-    const persisted = this.store.getJobByFingerprint(fingerprint);
+    let persisted = this.store.getJobByFingerprint(fingerprint);
     if (persisted) {
       if (persisted.handoff_sha256 !== relay.handoff_sha256 || persisted.reviewed_head !== relay.reviewed_head) {
         throw new Error("STORED_JOB_IDENTITY_MISMATCH");
@@ -140,6 +168,12 @@ export class ReviewTransportService {
 
     let session = this.store.getActiveSession();
     if (!session) throw new Error("SESSION_NOT_ARMED");
+
+    const activeBeforeCreate = this.store.getActiveJob();
+    if (activeBeforeCreate) this.cleanupUnsupportedActiveCommit(activeBeforeCreate, relay, session.session_id);
+    persisted = this.store.getJobByFingerprint(fingerprint);
+    if (persisted && TERMINAL_PHASES.has(persisted.phase)) return publicStatus(persisted);
+    if (relay.target_kind === "commit") this.bridge.assertReviewModeSupported(session.session_id, "relay-only");
 
     const deadline = new Date(Date.now() + this.config.turnDeadlineMs);
     const {job} = this.store.createOrGetJob(relay, fingerprint, deadline);
@@ -181,6 +215,7 @@ export class ReviewTransportService {
     const needsRecovery = ["SESSION_LOST", "SEND_UNCERTAIN"].includes(current.phase) ||
       (["DISPATCHED", "USER_TURN_ACKED", "ASSISTANT_STARTED", "RECONCILING"].includes(current.phase) && !this.ownedJobs.has(current.job_id));
     if (needsRecovery && !this.reconciledJobs.has(current.job_id)) {
+      if (relay.target_kind === "commit") this.bridge.assertReviewModeSupported(session.session_id, "relay-only");
       if (Date.now() >= Date.parse(current.deadline)) {
         return publicStatus(this.coordinator.transition(current.job_id, "TIMEOUT", "TURN_DEADLINE_EXCEEDED"));
       }
