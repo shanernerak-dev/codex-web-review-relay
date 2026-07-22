@@ -1,15 +1,10 @@
 (function () {
   "use strict";
   const adapter = globalThis.ReviewRelayDomAdapter;
-  const QUIET_IDLE_MS = 30_000;
-  const OUTPUT_STABILITY_MS = 30_000;
+  const QUIET_IDLE_MS = 1_500;
+  const OUTPUT_STABILITY_MS = 1_500;
   let active = null;
-  function sendLifecycle(type, job, errorCode = null, assistantOutput = null) {
-    return Promise.race([
-      chrome.runtime.sendMessage({kind: "LIFECYCLE", type, jobId: job.jobId, errorCode, ...(assistantOutput !== null ? {assistantOutput} : {})}),
-      new Promise((resolve) => setTimeout(() => resolve({ok: false, error: "LIFECYCLE_SEND_TIMEOUT"}), 5_000)),
-    ]);
-  }
+  function sendLifecycle(type, job, errorCode = null, assistantOutput = null) { return chrome.runtime.sendMessage({kind: "LIFECYCLE", type, jobId: job.jobId, errorCode, ...(assistantOutput !== null ? {assistantOutput} : {})}); }
   function requireLiveDeadline(message) { if (!Number.isFinite(Date.parse(message.deadline)) || Date.now() >= Date.parse(message.deadline)) throw new Error("MESSAGE_DEADLINE_EXPIRED"); }
 
   function monitor(message, state, userAcked = false, assistantStarted = false) {
@@ -40,16 +35,16 @@
           const now = Date.now();
           const generating = adapter.isGenerating(document);
           if (assistantStarted && generating) observedGenerating = true;
-          if (assistantStarted) {
+          if (assistantStarted && !generating && adapter.isIdle(document)) {
             const output = adapter.rawTurnText(document, assistantNode);
             if (output !== candidateOutput) {
               candidateOutput = output;
               candidateOutputSince = now;
             }
-            const outputStable = candidateOutput.length > 0 && now - candidateOutputSince >= OUTPUT_STABILITY_MS;
-            const pageIdle = !generating && adapter.isIdle(document);
-            const timeFallback = now - assistantStartedAt >= 120_000;
-            if (outputStable && (pageIdle || timeFallback)) { await sendLifecycle("TURN_IDLE", job, null, candidateOutput); finish(); }
+            const quiet = now - Math.max(lastMutationAt, assistantStartedAt) >= QUIET_IDLE_MS;
+            const stable = candidateOutput.length > 0 && now - candidateOutputSince >= OUTPUT_STABILITY_MS;
+            const completionObserved = observedGenerating || now - assistantStartedAt >= OUTPUT_STABILITY_MS;
+            if (quiet && stable && completionObserved) { await sendLifecycle("TURN_IDLE", job, null, candidateOutput); finish(); }
           }
         } while (inspectPending && !settled);
       } catch (error) { await sendLifecycle(userAcked ? "SESSION_LOST" : "SEND_UNCERTAIN", job, error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_MONITOR_ERROR"); finish(); }
@@ -64,7 +59,7 @@
       if (Date.now() < job.deadline || settled) return;
       void sendLifecycle(userAcked ? "TURN_TIMEOUT" : "SEND_UNCERTAIN", job).finally(finish);
     }, 250);
-    const pollTimer = setInterval(() => { void inspect(); }, 10_000);
+    const pollTimer = setInterval(() => { void inspect(); }, 250);
     void inspect();
   }
 
