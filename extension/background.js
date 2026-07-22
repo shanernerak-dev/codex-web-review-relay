@@ -1,6 +1,7 @@
 "use strict";
 const HOST_NAME = "dev.shanernerak.codex_web_review_relay";
-const SCHEMA_VERSION = {major: 1, minor: 0};
+const SCHEMA_VERSION = {major: 1, minor: 1};
+const CAPABILITIES = ["relay-only-v1"];
 const EXTENSION_VERSION = chrome.runtime.getManifest().version;
 const SESSION_KEY = "relaySession";
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -76,7 +77,7 @@ async function validateSavedBinding(saved) {
 }
 async function rearmSaved(saved) {
   await validateSavedBinding(saved);
-  const result = await nativeRequest("ARM_SESSION", {sessionId: saved.sessionId, extensionVersion: EXTENSION_VERSION});
+  const result = await nativeRequest("ARM_SESSION", {sessionId: saved.sessionId, extensionVersion: EXTENSION_VERSION, capabilities: CAPABILITIES});
   armed = {...saved, activeJobId: saved.activeJobId ?? null, bindingValid: true, connection: "connected", lastError: null};
   reconnectAttempts = 0; reconnectDisabled = false; startHeartbeat();
   return result;
@@ -111,7 +112,7 @@ async function arm() {
   const saved = (await chrome.storage.local.get(SESSION_KEY))[SESSION_KEY];
   const sessionId = saved?.tabId === tab.id && saved?.expiresAt > Date.now() ? saved.sessionId : uuid();
   reconnectDisabled = false;
-  const result = await nativeRequest("ARM_SESSION", {sessionId, extensionVersion: EXTENSION_VERSION});
+  const result = await nativeRequest("ARM_SESSION", {sessionId, extensionVersion: EXTENSION_VERSION, capabilities: CAPABILITIES});
   armed = {sessionId, tabId: tab.id, activeJobId: null, manualArm: true, bindingValid: true, connection: "connected", lastError: null, expiresAt: Date.now() + 1_800_000};
   reconnectAttempts = 0; startHeartbeat();
   await chrome.storage.local.set({[SESSION_KEY]: armed});

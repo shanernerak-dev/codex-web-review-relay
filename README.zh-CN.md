@@ -64,19 +64,19 @@
 Relay 本身是**纯 localhost 传输**——无云端依赖，relay 进程从不联系 GitHub 或任何远程服务。端到端评审工作流有两层外部依赖：
 
 **第一层——Relay 传输（始终需要，零外部依赖）：**
-Web 评审者的回复通过 relay MCP 通道（`assistant_output` + SHA-256）返回给 repo agent。这是**主要的结论传递路径**，不需要平台账号、不需要 PR、relay 进程无网络出口。
+Relay 进程通过 MCP 通道（`assistant_output` + SHA-256）返回传输完成结果。正式结论来源取决于 target mode：PR mode 必须从 PR comment readback；commit-only mode 使用 reviewer 返回的完整 `assistant_output`。Relay 进程本身没有网络出口。
 
 **第二层——GitHub PR comment 作为正式记录（可选）：**
-如果你的工作流需要在代码托管平台上留下持久的、可公开审计的结论，Web 评审者可以额外将结论发布为 PR comment。这一层是**可选的**——relay 往返已经将结论传递给 repo agent。无需 PR 的审计可通过保留 handoff 文件和 relay 的持久化 job 记录（SQLite）实现。
+对于 PR mode，PR comment 是正式结论记录，reviewer 必须发布并 read back。只有 commit-only mode 可以不使用 PR comment，因为完整的 relay `assistant_output` 才是正式来源。无需 PR 的审计可通过保留 handoff 文件和 relay 的持久化 job 记录（SQLite）实现。
 
 | 场景 | 需要 PR？ | 需要平台连接器？ | 说明 |
 |------|----------|-----------------|------|
-| 仅 relay 回传结论 | 否 | 否 | 结论通过 MCP `assistant_output` 返回。Handoff 文件 + job store 提供本地审计轨迹。 |
+| commit-only relay 结论 | 否 | reviewer 仍需具备 reviewed commit/handoff 的读取权限 | 完整结论通过 MCP `assistant_output` 返回；公开仓库通常可由 Web 读取，私有仓库需要相应权限或预加载可信材料。 |
 | PR comment（自动发布，任何仓库） | 是 | 是 | ChatGPT 必须绑定 [GitHub App](https://chatgpt.com/gpts) 连接器（或对应平台连接器）以读取 PR 内容并发布评论。公开仓库可通过网页读取，但自动发布评论仍需连接器。 |
 | PR comment（手动） | 是 | 否 | 评审者在对话中回复，你手动将结论复制到 PR comment。无需连接器。 |
 
 **简言之：**
-- **最小配置（仅 relay）**：不需要平台账号。Relay 传递结论；保留 handoff 文件用于审计。
+- **最小传输配置**：localhost relay 进程不需要平台账号；但 reviewer 仍需读取远端 commit 和 handoff，除非预先加载可信材料。
 - **自动 PR comment**：将对应平台连接器（如 [GitHub App](https://chatgpt.com/gpts)）绑定到 ChatGPT 账号。无论公开/私有仓库，自动发布评论都需要连接器。
 - **手动 PR comment**：无需连接器。评审者在对话中回复，你手动将结论复制到 PR comment。
 
@@ -246,7 +246,7 @@ CREATED -> DISPATCHED -> USER_TURN_ACKED -> ASSISTANT_STARTED -> TURN_IDLE
 
 **手动恢复**：只有 `recover_review(handoff_path, confirm_unsent=true)` 才能在终态 `MISMATCH` 后重新 dispatch。这是一次性审计操作——仅在确认原始消息确实未发送后使用。
 
-`TURN_IDLE` 表示浏览器传输结束。响应中的 `assistant_output` 字段包含 Web 评审者的完整回复文本（附 SHA-256 完整性校验）。如果你的工作流使用 GitHub PR comment 作为正式记录，Agent 应额外读取 PR comment。如果仅依赖 relay 通道，`assistant_output` 即为评审结论。
+`TURN_IDLE` 表示浏览器传输结束。必须按 `target_kind` 分支处理正式结论：`pr` 的 `assistant_output` 只是短的 transport confirmation，Agent 必须 read back PR comment，并核对 actor、reviewed head 与 scope；`commit` 的 `assistant_output` 才是完整正式结论，SHA-256 用于完整性校验。不要把 PR mode 的 `assistant_output` 当成正式结论解析。
 
 ## Review-Fix 轮次限制
 
@@ -259,7 +259,10 @@ for round_num in range(1, MAX_REVIEW_ROUNDS + 1):
     handoff = create_handoff(round_num, kind="review-request" if round_num == 1 else "review-fix")
     result = mcp_call("request_review", handoff_path=handoff)
     if result["phase"] == "TURN_IDLE":
-        verdict = parse_verdict(result["assistant_output"])  # 或使用 read_github_verdict() 读取 PR comment
+        if handoff.target_kind == "pr":
+            verdict = read_github_verdict(pr=handoff.target_pr, reviewed_head=handoff.reviewed_head)
+        else:
+            verdict = parse_verdict(result["assistant_output"])
         if verdict == "PASS":
             break
     # ... 修复 findings，commit，进入下一轮

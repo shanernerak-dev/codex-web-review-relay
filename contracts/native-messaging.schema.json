@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "schema_version": {"major": 1, "minor": 1},
-  "consumer_support": {"major": 1, "min_minor": 0, "max_minor": 0},
+  "consumer_support": {"major": 1, "min_minor": 0, "max_minor": 1},
   "type": "object",
   "required": ["schemaVersion", "type"],
   "properties": {
@@ -39,6 +39,7 @@
     "reviewMode": {"enum": ["pr-comment", "relay-only"]},
     "deadline": {"type": "string", "format": "date-time"},
     "allowUnsentSend": {"type": "boolean"},
+    "capabilities": {"type": "array", "items": {"type": "string", "enum": ["relay-only-v1"]}},
     "errorCode": {"type": "string", "minLength": 1},
     "assistantOutput": {"type": "string", "minLength": 1, "maxLength": 131072}
   }

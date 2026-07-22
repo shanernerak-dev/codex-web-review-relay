@@ -38,7 +38,7 @@ function harness() {
   const chrome = {
     runtime: {
       lastError: null,
-      getManifest: () => ({version: "0.1.0"}),
+      getManifest: () => ({version: "0.2.0"}),
       connectNative: () => { const created = port(); ports.push(created); return created; },
       onMessage: runtimeMessages,
     },
@@ -86,6 +86,9 @@ test("extension waits for lifecycle ACK, acknowledges dispatch receipt and recov
   await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
   const firstPort = h.ports[0];
   const armRequest = firstPort.messages.find((message) => message.type === "ARM_SESSION");
+  assert.equal(Array.from(armRequest.capabilities).join(","), "relay-only-v1");
+  assert.equal(armRequest.schemaVersion.major, 1);
+  assert.equal(armRequest.schemaVersion.minor, 1);
   h.respondTo(firstPort, armRequest, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
   assert.equal((await armResult).ok, true);
 

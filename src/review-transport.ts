@@ -31,14 +31,26 @@ export interface TransportStatus {
   deadline: string;
 }
 
+function targetIdentity(job: StoredJob): Pick<TransportStatus, "target_kind" | "target_id" | "target_pr"> {
+  if (typeof job.relay_json === "string" && job.relay_json.length > 0) {
+    try {
+      const relay = validateRelayExport(JSON.parse(job.relay_json));
+      return {target_kind: relay.target_kind, target_id: relay.target_id, target_pr: relay.target_pr};
+    } catch { /* Fall through to the durable handoff path identity. */ }
+  }
+  const pr = job.handoff_path.match(/\/pr-([1-9][0-9]*)\//);
+  if (pr) return {target_kind: "pr", target_id: `pr-${pr[1]}`, target_pr: Number(pr[1])};
+  const commit = job.handoff_path.match(/\/review-([a-z0-9][a-z0-9-]*)\//);
+  if (commit) return {target_kind: "commit", target_id: `review-${commit[1]}`, target_pr: null};
+  return {target_kind: "pr", target_id: "legacy", target_pr: null};
+}
+
 function publicStatus(job: StoredJob): TransportStatus {
-  const relay = validateRelayExport(JSON.parse(job.relay_json));
+  const identity = targetIdentity(job);
   return {
     job_id: job.job_id,
     fingerprint: job.fingerprint,
-    target_kind: relay.target_kind,
-    target_id: relay.target_id,
-    target_pr: relay.target_pr,
+    ...identity,
     handoff_path: job.handoff_path,
     handoff_sha256: job.handoff_sha256,
     reviewed_head: job.reviewed_head,

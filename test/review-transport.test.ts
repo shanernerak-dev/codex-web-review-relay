@@ -260,6 +260,43 @@ test("manual recovery rejects a pre-migration job without historical relay expor
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 
+test("pre-Stage-3 PR rows keep terminal idempotency, mismatch recovery, and status readability", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const currentRelay = relayFixture();
+  const oldRelay: any = {...currentRelay};
+  delete oldRelay.target_kind;
+  delete oldRelay.target_id;
+  const fingerprint = relayFingerprint(oldRelay);
+  const job = store.createOrGetJob(oldRelay, fingerprint, new Date(Date.now() + 60_000)).job;
+  const service = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => {
+    setImmediate(() => {
+      acceptOutbound(bridge, message);
+      lifecycle(bridge, "USER_TURN_ACKED", message.jobId as string);
+      lifecycle(bridge, "ASSISTANT_STARTED", message.jobId as string);
+      lifecycle(bridge, "TURN_IDLE", message.jobId as string, "legacy-compatible verdict");
+    });
+  }, async () => currentRelay);
+  try {
+    coordinator.transition(job.job_id, "TIMEOUT", "OLD_TIMEOUT");
+    const terminal = await service.requestReview(currentRelay.handoff_path);
+    assert.equal(terminal.job_id, job.job_id);
+    assert.equal(terminal.phase, "TIMEOUT");
+
+    store.db.prepare("UPDATE jobs SET phase = 'MISMATCH', result = 'mismatch', error_code = 'OLD_MISMATCH', deadline = ? WHERE job_id = ?")
+      .run(new Date(Date.now() + 60_000).toISOString(), job.job_id);
+    const recovered = await service.recoverReview(currentRelay.handoff_path, true);
+    assert.equal(recovered.job_id, job.job_id);
+    assert.equal(recovered.phase, "TURN_IDLE");
+
+    store.db.prepare("UPDATE jobs SET relay_json = NULL WHERE job_id = ?").run(job.job_id);
+    const byId = await service.getStatus({job_id: job.job_id});
+    const byPath = await service.getStatus({handoff_path: currentRelay.handoff_path});
+    assert.equal(byId.target_kind, "pr");
+    assert.equal(byId.target_id, "pr-41");
+    assert.deepEqual(byPath, byId);
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
 test("soft wait slice returns in-progress and same-fingerprint retry completes without redispatch", async () => {
   const {root, store, coordinator, bridge} = fixture();
   const relay = relayFixture();

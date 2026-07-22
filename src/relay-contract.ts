@@ -47,12 +47,18 @@ export function validateRelayExport(value: unknown): RelayExport {
   if ((version.minor as number) < RELAY_EXPORT_SUPPORT.minMinor) {
     throw new Error("RELAY_SCHEMA_MINOR_UNSUPPORTED");
   }
+  if ((version.minor as number) > RELAY_EXPORT_SUPPORT.maxMinor) {
+    throw new Error("RELAY_SCHEMA_MINOR_UNSUPPORTED");
+  }
 
   requireString(record, "repository", /^[^/\s]+\/[^/\s]+$/);
   const handoffPath = requireString(record, "handoff_path");
   const pathMatch = handoffPath.match(/^\.agent\/review_handoffs\/(?:pr-([1-9][0-9]*)|review-([a-z0-9][a-z0-9-]*))\/([a-z0-9][a-z0-9-]*)\/round-(0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\.md$/);
   if (!pathMatch) throw new Error("RELAY_EXPORT_INVALID:handoff_path");
   const inferredKind: RelayTargetKind = pathMatch[1] ? "pr" : "commit";
+  if (version.minor === 0 && inferredKind !== "pr") {
+    throw new Error("RELAY_COMMIT_SCHEMA_MINOR_UNSUPPORTED");
+  }
   if ((version.minor as number) >= 1 && (record.target_kind === undefined || record.target_id === undefined)) {
     throw new Error("RELAY_TARGET_IDENTITY_REQUIRED");
   }
@@ -91,10 +97,8 @@ export function validateRelayExport(value: unknown): RelayExport {
 }
 
 export function relayFingerprint(relay: RelayExport): string {
-  return sha256(canonicalJson({
+  const identity = {
     repository: relay.repository,
-    target_kind: relay.target_kind,
-    target_id: relay.target_id,
     target_pr: relay.target_pr,
     handoff_path: relay.handoff_path,
     handoff_sha256: relay.handoff_sha256,
@@ -104,5 +108,10 @@ export function relayFingerprint(relay: RelayExport): string {
     effective_round: relay.effective_round,
     package_kind: relay.package_kind,
     scope_sha256: relay.scope_sha256,
-  }));
+  };
+  if (relay.target_kind === "commit") {
+    return sha256(canonicalJson({...identity, target_kind: relay.target_kind, target_id: relay.target_id}));
+  }
+  // PR mode intentionally preserves the pre-Stage-3 byte-for-byte identity.
+  return sha256(canonicalJson(identity));
 }

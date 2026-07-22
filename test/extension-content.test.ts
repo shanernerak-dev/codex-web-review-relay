@@ -157,6 +157,41 @@ test("relay-only monitor waits for a long response without requiring composer id
   assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "A long formal verdict that is returned directly through assistant_output");
 });
 
+test("relay-only monitor does not terminalize a stable bubble before generation is observed", async () => {
+  const h = harness();
+  assert.equal((await h.dispatch(3_500, "relay-only")).ok, true);
+  h.setUser(true);
+  h.setAssistant(true);
+  h.setAssistantOutput("partial formal verdict");
+  h.setGenerating(false);
+  h.mutate();
+  await waitFor(() => h.events.includes("ASSISTANT_STARTED"));
+  await new Promise((resolveWait) => setTimeout(resolveWait, 3_000));
+  assert.equal(h.events.includes("TURN_IDLE"), false);
+  await waitFor(() => h.events.includes("TURN_TIMEOUT"), 1_000);
+});
+
+test("relay-only monitor can resume after a long stable partial bubble", async () => {
+  const h = harness();
+  assert.equal((await h.dispatch(9_000, "relay-only")).ok, true);
+  h.setUser(true);
+  h.setAssistant(true);
+  h.setAssistantOutput("partial formal verdict");
+  h.setGenerating(false);
+  h.mutate();
+  await waitFor(() => h.events.includes("ASSISTANT_STARTED"));
+  await new Promise((resolveWait) => setTimeout(resolveWait, 2_800));
+  assert.equal(h.events.includes("TURN_IDLE"), false);
+  h.setGenerating(true);
+  h.mutate();
+  await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  h.setAssistantOutput("complete formal verdict after a delayed generation phase");
+  h.setGenerating(false);
+  h.mutate();
+  await waitFor(() => h.events.includes("TURN_IDLE"), 7_000);
+  assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "complete formal verdict after a delayed generation phase");
+});
+
 test("expired dispatch and recovery fail before any DOM write or click", async () => {
   const dispatchHarness = harness();
   const dispatchResult = await dispatchHarness.dispatch(-1);

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "schema_version": {"major": 1, "minor": 1},
+  "title": "Codex Web Review Relay export",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -20,13 +20,16 @@
     "schema_version": {
       "type": "object",
       "required": ["major", "minor"],
-      "properties": {"major": {"const": 1}, "minor": {"type": "integer", "minimum": 0, "maximum": 1}}
+      "properties": {
+        "major": {"const": 1},
+        "minor": {"type": "integer", "minimum": 0, "maximum": 1}
+      }
     },
     "repository": {"type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$"},
     "target_kind": {"enum": ["pr", "commit"]},
     "target_id": {"type": "string", "pattern": "^(pr-[1-9][0-9]*|review-[a-z0-9][a-z0-9-]*)$"},
     "target_pr": {"type": ["integer", "null"], "minimum": 1},
-    "handoff_path": {"type": "string", "pattern": "^\\.agent/review_handoffs/(pr-[1-9][0-9]*|review-[a-z0-9][a-z0-9-]*)/[a-z0-9][a-z0-9-]*/round-(0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"},
+    "handoff_path": {"type": "string"},
     "handoff_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "full_ref": {"type": "string", "pattern": "^refs/heads/[A-Za-z0-9._/-]+$"},
     "reviewed_head": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
@@ -35,5 +38,40 @@
     "package_kind": {"enum": ["review-request", "review-fix", "evidence-amendment", "human-decision"]},
     "normalized_scope": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
     "scope_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-  }
+  },
+  "oneOf": [
+    {
+      "title": "v1.0 PR export",
+      "required": ["target_pr"],
+      "properties": {
+        "schema_version": {"properties": {"minor": {"const": 0}}},
+        "handoff_path": {"pattern": "^\\.agent/review_handoffs/pr-[1-9][0-9]*/[a-z0-9][a-z0-9-]*/round-(0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"},
+        "target_pr": {"type": "integer", "minimum": 1, "description": "Runtime validator also enforces target_id == pr-${target_pr}."},
+        "target_kind": {"const": "pr"},
+        "target_id": {"pattern": "^pr-[1-9][0-9]*$"}
+      }
+    },
+    {
+      "title": "v1.1 PR export",
+      "required": ["target_kind", "target_id", "target_pr"],
+      "properties": {
+        "schema_version": {"properties": {"minor": {"const": 1}}},
+        "target_kind": {"const": "pr"},
+        "target_id": {"pattern": "^pr-[1-9][0-9]*$"},
+        "target_pr": {"type": "integer", "minimum": 1, "description": "Runtime validator also enforces target_id == pr-${target_pr}."},
+        "handoff_path": {"pattern": "^\\.agent/review_handoffs/pr-[1-9][0-9]*/[a-z0-9][a-z0-9-]*/round-(0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"}
+      }
+    },
+    {
+      "title": "v1.1 commit-only export",
+      "required": ["target_kind", "target_id", "target_pr"],
+      "properties": {
+        "schema_version": {"properties": {"minor": {"const": 1}}},
+        "target_kind": {"const": "commit"},
+        "target_id": {"pattern": "^review-[a-z0-9][a-z0-9-]*$"},
+        "target_pr": {"const": null},
+        "handoff_path": {"pattern": "^\\.agent/review_handoffs/review-[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*/round-(0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"}
+      }
+    }
+  ]
 }

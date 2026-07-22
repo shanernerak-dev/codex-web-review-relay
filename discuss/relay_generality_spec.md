@@ -30,7 +30,7 @@
 - 现有 v1.0 PR 形态继续兼容：`target_pr` 为正整数，handoff 使用 `pr-<N>` identity。
 - Stage 3 为 commit-only review 增加 `target_kind` / `target_id`：`target_kind=pr` 保留现有 PR 语义，`target_kind=commit` 使用稳定的 repo-local review identity，不要求 `target_pr` 或 open PR。
 - commit-only handoff 增加非 PR 路径形态（例如 `.agent/review_handoffs/review-<id>/...`）；`full_ref` 与 `reviewed_head` 仍是远端取证定位字段。
-- commit-only fingerprint 必须包含 target kind、target identity、handoff hash、ref、reviewed head、stream、round、package kind 和 scope hash，避免不同 review target 发生幂等碰撞。
+- commit-only fingerprint 必须包含 target kind、target identity、handoff hash、ref、reviewed head、stream、round、package kind 和 scope hash，避免不同 review target 发生幂等碰撞；PR mode 必须继续使用 Stage 3 之前的 fingerprint 字段序列，保证升级兼容。
 - Stage 3 必须定义向后兼容的 schema version、validator、helper 输出和 MCP/native contract 迁移；在该 contract 落地前，不得宣称已支持无 PR 模式。
 
 ## 背景与根因（dry run 结论，作为本 spec 的事实基础）

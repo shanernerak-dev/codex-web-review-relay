@@ -5,6 +5,7 @@ import { JobCoordinator } from "./job-coordinator.ts";
 import type { StoredSession } from "./job-store.ts";
 
 export const NATIVE_SCHEMA_VERSION = Object.freeze({major: 1, minor: 1});
+export const RELAY_ONLY_CAPABILITY = "relay-only-v1";
 const MAX_ASSISTANT_OUTPUT_BYTES = 131_072;
 
 type NativeRecord = Record<string, unknown>;
@@ -78,6 +79,9 @@ export class NativeBridge {
         extensionVersion: requireText(message, "extensionVersion"),
         schemaMajor: peerVersion.major,
         schemaMinor: peerVersion.minor,
+        capabilities: Array.isArray(message.capabilities)
+          ? message.capabilities.filter((entry): entry is string => typeof entry === "string")
+          : [],
         leaseMs: this.leaseMs,
       });
       return this.ack(requestId, "SESSION_ARMED", session);
@@ -140,6 +144,7 @@ export class NativeBridge {
     deadline: string;
   }): NativeRecord {
     const session = this.requireSession(input.sessionId);
+    this.requireReviewModeCapability(session, input.reviewMode ?? "pr-comment");
     const job = this.coordinator.store.getJob(input.jobId);
     if (job.phase !== "CREATED" || job.fingerprint !== input.fingerprint) {
       throw new Error("DISPATCH_PRECONDITION_FAILED");
@@ -172,6 +177,7 @@ export class NativeBridge {
     allowUnsentSend: boolean;
   }): NativeRecord {
     const session = this.requireSession(input.sessionId);
+    this.requireReviewModeCapability(session, input.reviewMode ?? "pr-comment");
     const job = this.coordinator.store.getJob(input.jobId);
     if (job.phase !== "RECONCILING" || job.fingerprint !== input.fingerprint) throw new Error("RECONCILE_PRECONDITION_FAILED");
     return {
@@ -223,6 +229,16 @@ export class NativeBridge {
     const session = this.coordinator.store.getActiveSession();
     if (!session || session.session_id !== sessionId) throw new Error("SESSION_NOT_ARMED");
     return session;
+  }
+
+  private requireReviewModeCapability(session: StoredSession, reviewMode: "pr-comment" | "relay-only"): void {
+    if (reviewMode !== "relay-only") return;
+    let capabilities: unknown;
+    try { capabilities = JSON.parse(session.capabilities_json); }
+    catch { capabilities = null; }
+    if (!Array.isArray(capabilities) || !capabilities.includes(RELAY_ONLY_CAPABILITY)) {
+      throw new Error("RELAY_ONLY_EXTENSION_UNSUPPORTED");
+    }
   }
 
   private ack(requestId: string, type: string, session: StoredSession | null): NativeRecord {

@@ -80,9 +80,35 @@ test("native dispatch carries relay-only mode for commit-only targets", () => {
   });
   const fingerprint = relayFingerprint(relay);
   const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
-  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm", sessionId: "session-1", extensionVersion: "0.1.0"});
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm", sessionId: "session-1", extensionVersion: "0.2.0", capabilities: ["relay-only-v1"]});
   const dispatch = bridge.createDispatch({sessionId: "session-1", jobId: job.job_id, fingerprint, envelope: renderTriggerEnvelope(relay), reviewMode: "relay-only", deadline: job.deadline});
   assert.equal(dispatch.reviewMode, "relay-only");
+  store.close(); rmSync(root, {recursive: true, force: true});
+});
+
+test("native bridge rejects relay-only dispatch for a legacy extension before DOM work", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-legacy-relay-only-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const coordinator = new JobCoordinator(store);
+  const bridge = new NativeBridge(coordinator, 60_000);
+  const relay = relayFixture({
+    schema_version: {major: 1, minor: 1}, target_kind: "commit", target_id: "review-legacy-check", target_pr: null,
+    handoff_path: ".agent/review_handoffs/review-legacy-check/main/round-01-review-request.md",
+  });
+  const fingerprint = relayFingerprint(relay);
+  const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+  bridge.handleInbound({schemaVersion: {major: 1, minor: 0}, type: "ARM_SESSION", requestId: "arm", sessionId: "session-1", extensionVersion: "0.1.0"});
+  assert.throws(
+    () => bridge.createDispatch({sessionId: "session-1", jobId: job.job_id, fingerprint, envelope: renderTriggerEnvelope(relay), reviewMode: "relay-only", deadline: job.deadline}),
+    /RELAY_ONLY_EXTENSION_UNSUPPORTED/,
+  );
+  assert.equal(store.getJob(job.job_id).phase, "CREATED");
+  bridge.markDispatchWritten(job.job_id);
+  coordinator.transition(job.job_id, "RECONCILING");
+  assert.throws(
+    () => bridge.createReconcile({sessionId: "session-1", jobId: job.job_id, fingerprint, envelope: renderTriggerEnvelope(relay), reviewMode: "relay-only", deadline: job.deadline, allowUnsentSend: false}),
+    /RELAY_ONLY_EXTENSION_UNSUPPORTED/,
+  );
   store.close(); rmSync(root, {recursive: true, force: true});
 });
 
