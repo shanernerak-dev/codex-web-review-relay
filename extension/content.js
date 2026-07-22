@@ -41,9 +41,9 @@
               candidateOutput = output;
               candidateOutputSince = now;
             }
-            const quiet = now - Math.max(lastMutationAt, assistantStartedAt) >= QUIET_IDLE_MS;
+            const quiet = candidateOutput.length > 0 && now - candidateOutputSince >= QUIET_IDLE_MS;
             const stable = candidateOutput.length > 0 && now - candidateOutputSince >= OUTPUT_STABILITY_MS;
-            const completionObserved = observedGenerating || now - assistantStartedAt >= OUTPUT_STABILITY_MS;
+            const completionObserved = observedGenerating || now - assistantStartedAt >= 120_000;
             if (quiet && stable && completionObserved) { await sendLifecycle("TURN_IDLE", job, null, candidateOutput); finish(); }
           }
         } while (inspectPending && !settled);
@@ -59,7 +59,7 @@
       if (Date.now() < job.deadline || settled) return;
       void sendLifecycle(userAcked ? "TURN_TIMEOUT" : "SEND_UNCERTAIN", job).finally(finish);
     }, 250);
-    const pollTimer = setInterval(() => { void inspect(); }, 250);
+    const pollTimer = setInterval(() => { void inspect(); }, 10_000);
     void inspect();
   }
 

@@ -101,7 +101,21 @@ pwsh -NoProfile -File scripts/install-native-host.ps1 `
 - 注册到当前用户的 Chrome Native Messaging manifest
 - `CODEX_WEB_REVIEW_RELAY_TOKEN` 用户环境变量
 
-### 3. 加载扩展
+### 3. 配置 relay-export helper
+
+安装器会将 `relay.config.json` 中的 `helperPath` 设为 `scripts/tools/check_stage_gate_readiness.py`（producer 仓库的 helper）。**你必须将其修改为你自己的 helper 路径。**
+
+如果你还没有 helper，本仓库包含一个最小实现 `scripts/tools/relay_export_helper.py`。修改生成的配置：
+
+```json
+{
+  "helperPath": "scripts/tools/relay_export_helper.py"
+}
+```
+
+或按照下方[集成](#在你的仓库中集成)章节的合同创建你自己的 helper。
+
+### 4. 加载扩展
 
 1. 打开 `chrome://extensions`
 2. 启用**开发者模式**
@@ -109,15 +123,15 @@ pwsh -NoProfile -File scripts/install-native-host.ps1 `
 
 扩展 ID 固定为：`kkdijpckhlminpolkllmmkldlljakfem`。
 
-### 4. Arm 一个对话
+### 5. Arm 一个对话
 
 1. 打开（或新建）你想用作评审者的 ChatGPT 对话。
 2. 点击扩展图标，点击 **Arm**。
 3. 弹窗确认会话已激活，并显示 lease 计时器。
 
-### 5. 连接你的 MCP 客户端
+### 6. 连接你的 MCP 客户端
 
-在 Codex 项目配置（或任何 MCP 客户端配置）中：
+在 Codex 项目配置（或任何 MCP 客户端配置）中。注意：`${CODEX_WEB_REVIEW_RELAY_TOKEN}` 使用 shell 风格的变量展开。如果你的 MCP 客户端不支持此语法，请替换为 `CODEX_WEB_REVIEW_RELAY_TOKEN` 环境变量的实际值。
 
 ```json
 {
@@ -132,9 +146,25 @@ pwsh -NoProfile -File scripts/install-native-host.ps1 `
 }
 ```
 
-### 6. 触发评审
+### 7. 创建 handoff 文件并触发评审
 
-从你的编码 Agent 调用：
+在调用 relay 之前，先在预期路径创建 handoff 文件。最小内容：
+
+```markdown
+# Review Request
+
+Package kind: `review-request`
+Review stream: `main`
+Effective round: `1`
+Target PR: `#1`
+Review scope: <评审者应关注的内容>
+
+## Findings to review
+
+<你的内容>
+```
+
+提交 handoff 文件（helper 会验证文件已 tracked 且与 HEAD 一致），然后从你的编码 Agent 调用：
 
 ```
 request_review(handoff_path=".agent/review_handoffs/pr-1/main/round-01-review-request.md")
@@ -254,7 +284,7 @@ Relay 不解析 handoff 正文——只做哈希。发送给 ChatGPT 的 trigger
   "nativeHostName": "dev.shanernerak.codex_web_review_relay",
   "extensionId": "kkdijpckhlminpolkllmmkldlljakfem",
   "requestWaitSliceMs": 300000,
-  "turnDeadlineMs": 900000
+  "turnDeadlineMs": 1800000
 }
 ```
 
@@ -262,7 +292,7 @@ Relay 不解析 handoff 正文——只做哈希。发送给 ChatGPT 的 trigger
 - `repositoryRoot`：你的仓库绝对路径。Helper 以此为 cwd 运行。
 - `helperPath`：仓库相对路径，指向你的 relay-export helper。
 - `requestWaitSliceMs`：单次 MCP 调用最长等待时间，超时返回进行中状态（默认 5 分钟）。
-- `turnDeadlineMs`：整个评审 turn 的硬截止时间（默认 15 分钟）。
+- `turnDeadlineMs`：整个评审 turn 的硬截止时间（默认 30 分钟）。
 
 ## 可选：Stage Gate 治理
 

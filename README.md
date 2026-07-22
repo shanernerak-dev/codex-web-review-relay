@@ -103,7 +103,21 @@ This generates:
 - A Chrome Native Messaging manifest registered for the current user
 - The `CODEX_WEB_REVIEW_RELAY_TOKEN` user environment variable
 
-### 3. Load the extension
+### 3. Configure the relay-export helper
+
+The installer sets `helperPath` in `relay.config.json` to `scripts/tools/check_stage_gate_readiness.py` (the producer repository's helper). **You must update this to point at your own helper.**
+
+If you don't have a helper yet, this repository includes a minimal one at `scripts/tools/relay_export_helper.py`. Update the generated config:
+
+```json
+{
+  "helperPath": "scripts/tools/relay_export_helper.py"
+}
+```
+
+Or create your own helper following the contract in the [Integration](#integration-with-your-repository) section below.
+
+### 4. Load the extension
 
 1. Open `chrome://extensions`
 2. Enable **Developer mode**
@@ -111,15 +125,15 @@ This generates:
 
 The extension ID is fixed: `kkdijpckhlminpolkllmmkldlljakfem`.
 
-### 4. Arm a conversation
+### 5. Arm a conversation
 
 1. Open (or create) a ChatGPT conversation you want to use as the reviewer.
 2. Click the extension icon and click **Arm**.
 3. The popup confirms the session is active with a lease timer.
 
-### 5. Connect your MCP client
+### 6. Connect your MCP client
 
-In your Codex project config (or any MCP client config):
+In your Codex project config (or any MCP client config). Note: `${CODEX_WEB_REVIEW_RELAY_TOKEN}` uses shell-style variable expansion. If your MCP client does not support this syntax, replace it with the actual token value from the `CODEX_WEB_REVIEW_RELAY_TOKEN` environment variable.
 
 ```json
 {
@@ -134,9 +148,25 @@ In your Codex project config (or any MCP client config):
 }
 ```
 
-### 6. Trigger a review
+### 7. Create a handoff file and trigger a review
 
-From your coding agent:
+Before calling the relay, create a handoff file at the expected path. Minimum content:
+
+```markdown
+# Review Request
+
+Package kind: `review-request`
+Review stream: `main`
+Effective round: `1`
+Target PR: `#1`
+Review scope: <what the reviewer should look at>
+
+## Findings to review
+
+<your content here>
+```
+
+Commit the handoff file (the helper verifies it is tracked and matches HEAD), then from your coding agent:
 
 ```
 request_review(handoff_path=".agent/review_handoffs/pr-1/main/round-01-review-request.md")
@@ -256,7 +286,7 @@ Edit the generated `relay.config.json`:
   "nativeHostName": "dev.shanernerak.codex_web_review_relay",
   "extensionId": "kkdijpckhlminpolkllmmkldlljakfem",
   "requestWaitSliceMs": 300000,
-  "turnDeadlineMs": 900000
+  "turnDeadlineMs": 1800000
 }
 ```
 
@@ -264,7 +294,7 @@ Key fields:
 - `repositoryRoot`: your repo's absolute path. The helper runs with this as cwd.
 - `helperPath`: repo-relative path to your relay-export helper.
 - `requestWaitSliceMs`: max time one MCP call waits before returning in-progress (default 5 min).
-- `turnDeadlineMs`: hard deadline for the entire review turn (default 15 min).
+- `turnDeadlineMs`: hard deadline for the entire review turn (default 30 min).
 
 ## Optional: Stage Gate Governance
 
