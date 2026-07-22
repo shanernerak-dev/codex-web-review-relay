@@ -125,10 +125,11 @@
     return clickAndConfirm(document, {baseline, input}, envelope);
   }
   function isGenerating(document) { return document.querySelectorAll(STOP_SELECTOR).length === 1; }
+  function isResponseIdle(document) { return document.querySelectorAll(STOP_SELECTOR).length === 0; }
   function isIdle(document) {
-    if (document.querySelectorAll(STOP_SELECTOR).length !== 0) return false;
+    if (!isResponseIdle(document)) return false;
     try { composer(document); return true; }
     catch { return false; }
   }
-  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, writeComposer, snapshotTurns, newTurn, turns, dispatch, reconcile, resumeDraft, isGenerating, isIdle};
+  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, writeComposer, snapshotTurns, newTurn, turns, dispatch, reconcile, resumeDraft, isGenerating, isResponseIdle, isIdle};
 })(globalThis);

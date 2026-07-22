@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FORMAL_REVIEW_PUBLICATION_INSTRUCTION, renderTriggerEnvelope } from "../src/envelope.ts";
+import { FORMAL_REVIEW_PUBLICATION_INSTRUCTION, RELAY_ONLY_VERDICT_INSTRUCTION, renderTriggerEnvelope } from "../src/envelope.ts";
 import { relayFingerprint, validateRelayExport } from "../src/relay-contract.ts";
 import { relayFixture } from "./fixtures.ts";
 
@@ -62,4 +62,23 @@ test("fingerprint and six locator fields plus fixed publication instruction are 
   assert.match(envelope.text, /Reviewed head: a{40}/);
   assert.match(envelope.sha256, /^[0-9a-f]{64}$/);
   assert.doesNotMatch(envelope.text, /normalized_scope|handoff_sha256/);
+});
+
+test("commit-only export has a stable target identity and relay-only envelope", () => {
+  const relay = validateRelayExport(relayFixture({
+    schema_version: {major: 1, minor: 1},
+    target_kind: "commit",
+    target_id: "review-local-run",
+    target_pr: null,
+    handoff_path: ".agent/review_handoffs/review-local-run/main/round-01-review-request.md",
+  }));
+  assert.equal(relay.target_kind, "commit");
+  assert.equal(relay.target_id, "review-local-run");
+  assert.equal(relay.target_pr, null);
+  const envelope = renderTriggerEnvelope(relay);
+  assert.equal(envelope.text.split("\n").length, 9);
+  assert.match(envelope.text, /Target kind: commit/);
+  assert.match(envelope.text, /Target ID: review-local-run/);
+  assert.equal(envelope.text.split("\n").at(-1), RELAY_ONLY_VERDICT_INSTRUCTION);
+  assert.doesNotMatch(envelope.text, /GitHub PR comment following/);
 });

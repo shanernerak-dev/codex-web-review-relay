@@ -281,8 +281,10 @@ Given a `handoff_path` (repo-relative POSIX path), output a JSON object to stdou
 
 ```json
 {
-  "schema_version": {"major": 1, "minor": 0},
+  "schema_version": {"major": 1, "minor": 1},
   "repository": "owner/repo",
+  "target_kind": "pr",
+  "target_id": "pr-42",
   "target_pr": 42,
   "handoff_path": ".agent/review_handoffs/pr-42/main/round-01-review-request.md",
   "handoff_sha256": "<sha256 of the handoff file at HEAD>",
@@ -308,9 +310,9 @@ The helper must output exactly one JSON object to stdout on success, or exit non
 
 See `scripts/tools/check_stage_gate_readiness.py relay-export` in the [producer repository](https://github.com/David-JA/single-crystal-stress) for a full reference implementation. This repository also includes a minimal helper at `scripts/tools/relay_export_helper.py`. The minimum contract:
 
-1. Validate the handoff path matches `.agent/review_handoffs/pr-<N>/<stream>/round-<NN>-<kind>.md`.
+1. Validate the handoff path matches `.agent/review_handoffs/pr-<N>/<stream>/round-<NN>-<kind>.md` (PR mode) or `.agent/review_handoffs/review-<id>/<stream>/round-<NN>-<kind>.md` (commit-only mode).
 2. Verify the file is tracked, committed, and worktree matches HEAD.
-3. Read and require the `Target PR`, `Review stream`, `Effective round`, `Package kind`, and `Review scope` headers; compare the first four with the canonical path and reject missing, duplicate, malformed, or mismatched values. Scope has no fallback.
+3. Read and require the stable headers. PR mode requires `Target PR`; commit-only mode requires `Target kind: commit` and `Target ID` and rejects a PR target. `Review stream`, `Effective round`, and `Package kind` must match the canonical path; missing, duplicate, malformed, or mismatched values are rejected. Scope has no fallback.
 4. Compute SHA-256 hashes and output the JSON.
 5. Exit non-zero with a stable error code on any failure (fail closed).
 
@@ -334,7 +336,24 @@ Review scope: <what the reviewer should look at>
 <your content here>
 ```
 
-The **native host** does not parse the handoff body — it only hashes the file and consumes the relay-export JSON produced by the helper. The **helper** is responsible for parsing and validating the handoff header fields. The trigger envelope sent to ChatGPT contains six dynamic fields (path, ref, head, stream, round, kind) and two fixed instructions: one directing the reviewer to execute the review based on pre-read context and respond in plain text, and one noting that publishing the verdict as a GitHub PR comment is optional — the relay returns the reviewer's response regardless of whether a PR comment is posted.
+The **native host** does not parse the handoff body — it only consumes the validated relay-export JSON produced by the helper. The **helper** is responsible for parsing and validating the handoff header fields. PR mode keeps the six-field envelope and PR-comment instruction. Commit-only mode adds `Target kind` / `Target ID` and instructs the reviewer to return the complete formal verdict in `assistant_output` without a PR comment.
+
+Commit-only handoff format:
+
+```markdown
+# Commit Review Request
+
+Package kind: `review-request`
+Review stream: `main`
+Effective round: `1`
+Target kind: `commit`
+Target ID: `review-security-audit`
+Review scope: <what the reviewer should look at>
+
+## Findings to review
+
+<your content here>
+```
 
 ### Configuration
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "schema_version": {"major": 1, "minor": 0},
+  "schema_version": {"major": 1, "minor": 1},
   "consumer_support": {"major": 1, "min_minor": 0, "max_minor": 0},
   "type": "object",
   "required": ["schemaVersion", "type"],
@@ -10,7 +10,7 @@
       "required": ["major", "minor"],
       "properties": {
         "major": {"const": 1},
-        "minor": {"type": "integer", "minimum": 0, "maximum": 0}
+        "minor": {"type": "integer", "minimum": 0, "maximum": 1}
       }
     },
     "type": {
@@ -36,6 +36,7 @@
     "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "envelope": {"type": "string"},
     "envelopeSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "reviewMode": {"enum": ["pr-comment", "relay-only"]},
     "deadline": {"type": "string", "format": "date-time"},
     "allowUnsentSend": {"type": "boolean"},
     "errorCode": {"type": "string", "minLength": 1},

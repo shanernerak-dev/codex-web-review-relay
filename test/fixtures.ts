@@ -6,6 +6,8 @@ export function relayFixture(overrides: Partial<RelayExport> = {}): RelayExport 
   return {
     schema_version: {major: 1, minor: 0},
     repository: "David-JA/single-crystal-stress",
+    target_kind: "pr",
+    target_id: "pr-41",
     target_pr: 41,
     handoff_path: ".agent/review_handoffs/pr-41/stage-b-delivery/round-01-review-request.md",
     handoff_sha256: "b".repeat(64),

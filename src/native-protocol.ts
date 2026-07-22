@@ -4,7 +4,7 @@ import type { TriggerEnvelope } from "./envelope.ts";
 import { JobCoordinator } from "./job-coordinator.ts";
 import type { StoredSession } from "./job-store.ts";
 
-export const NATIVE_SCHEMA_VERSION = Object.freeze({major: 1, minor: 0});
+export const NATIVE_SCHEMA_VERSION = Object.freeze({major: 1, minor: 1});
 const MAX_ASSISTANT_OUTPUT_BYTES = 131_072;
 
 type NativeRecord = Record<string, unknown>;
@@ -24,7 +24,7 @@ function validateVersion(message: NativeRecord): {major: number; minor: number} 
   if (!Number.isInteger(version.minor) || (version.minor as number) < 0) {
     throw new Error("NATIVE_SCHEMA_MINOR_INVALID");
   }
-  if (version.minor !== NATIVE_SCHEMA_VERSION.minor) {
+  if ((version.minor as number) > NATIVE_SCHEMA_VERSION.minor) {
     throw new Error("NATIVE_SCHEMA_MINOR_UNSUPPORTED");
   }
   return {major: version.major as number, minor: version.minor as number};
@@ -136,6 +136,7 @@ export class NativeBridge {
     jobId: string;
     fingerprint: string;
     envelope: TriggerEnvelope;
+    reviewMode?: "pr-comment" | "relay-only";
     deadline: string;
   }): NativeRecord {
     const session = this.requireSession(input.sessionId);
@@ -152,6 +153,7 @@ export class NativeBridge {
       fingerprint: input.fingerprint,
       envelope: input.envelope.text,
       envelopeSha256: input.envelope.sha256,
+      reviewMode: input.reviewMode ?? "pr-comment",
       deadline: input.deadline,
     };
   }
@@ -165,6 +167,7 @@ export class NativeBridge {
     jobId: string;
     fingerprint: string;
     envelope: TriggerEnvelope;
+    reviewMode?: "pr-comment" | "relay-only";
     deadline: string;
     allowUnsentSend: boolean;
   }): NativeRecord {
@@ -180,6 +183,7 @@ export class NativeBridge {
       fingerprint: input.fingerprint,
       envelope: input.envelope.text,
       envelopeSha256: input.envelope.sha256,
+      reviewMode: input.reviewMode ?? "pr-comment",
       deadline: input.deadline,
       allowUnsentSend: input.allowUnsentSend,
     };

@@ -13,7 +13,7 @@
         "properties": {
           "handoff_path": {
             "type": "string",
-            "pattern": "^\\.agent/review_handoffs/pr-[1-9][0-9]*/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"
+            "pattern": "^\\.agent/review_handoffs/(?:pr-[1-9][0-9]*|review-[a-z0-9][a-z0-9-]*)/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"
           }
         }
       }
@@ -28,7 +28,7 @@
         "properties": {
           "handoff_path": {
             "type": "string",
-            "pattern": "^\\.agent/review_handoffs/pr-[1-9][0-9]*/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"
+            "pattern": "^\\.agent/review_handoffs/(?:pr-[1-9][0-9]*|review-[a-z0-9][a-z0-9-]*)/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"
           },
           "confirm_unsent": {"const": true}
         }

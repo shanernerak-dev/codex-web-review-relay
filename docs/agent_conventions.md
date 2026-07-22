@@ -13,8 +13,8 @@
 
 - **两层依赖**：
   - L1 relay transport：零外部依赖，负责返回 transport completion、`assistant_output` 与 SHA-256。
-  - formal verdict source 由 workflow mode 声明：在 Stage 3 relay-only contract 完成并验收前，Stage 1/Stage 2 的 v1 PR-comment mode 均以目标 PR comment readback 为正式来源，`assistant_output` 只作为非空短确认；Stage 3 relay-only mode 完成并验收后，才可将完整 `assistant_output` 作为正式结论，PR comment 在该模式下可选。
-  - **envelope 构成**：6 个动态字段 `handoff_path` / `full_ref` / `reviewed_head` / `review_stream` / `effective_round` / `package_kind` + Stage 1/Stage 2 v1 PR-comment mode 的固定 PR-publication instruction。该 instruction 要求 reviewer 将 formal verdict 发布到目标 PR comment；Stage 3 relay-only contract 验收后才可改为或增加对应的 assistant-output instruction。见 `src/envelope.ts`。
+  - formal verdict source 由 workflow mode 声明：Stage 1/Stage 2 的 v1 PR-comment mode 以目标 PR comment readback 为正式来源，`assistant_output` 只作为非空短确认；Stage 3 的 commit-only relay-only mode 以完整 `assistant_output` 为正式结论，PR comment 不适用。
+  - **envelope 构成**：PR mode 保留 6 个动态字段 `handoff_path` / `full_ref` / `reviewed_head` / `review_stream` / `effective_round` / `package_kind` + PR-publication instruction；Stage 3 commit-only mode 在此基础上增加 `target_kind` / `target_id`，并使用 relay-only verdict instruction。两种 mode 都不内嵌 handoff 正文。见 `src/envelope.ts`。
 - **native host 不解析 handoff 正文**：只哈希文件并消费 helper 产出的 relay-export JSON。envelope **不提供正文兜底**——reviewer 必须经 `reviewed head` 在远端读 commit 与 handoff。
 
 ## 角色边界
@@ -22,7 +22,7 @@
 | 角色 | 职责 | 不做什么 |
 |---|---|---|
 | repo agent | 写 handoff、commit、**push**、触发 `request_review`、解析 verdict、按 findings 改文档 | 不替 reviewer 下结论 |
-| web reviewer | 读 `Path` + `reviewed head`、评审；Stage 1/Stage 2 的 v1 PR-comment mode 发布完整 formal verdict 到目标 PR comment 并回短确认，Stage 3 relay-only mode 验收后才可通过 `assistant_output` 回完整 verdict | 不依赖 envelope 内嵌正文 |
+| web reviewer | 读 `Path` + target identity + `reviewed head`、评审；PR mode 发布 formal verdict 到目标 PR comment 并回短确认，commit-only relay-only mode 直接回完整 verdict | 不依赖 envelope 内嵌正文 |
 | native host | 校验 relay-export、哈希 handoff、dispatch、捕获 `assistant_output`、fail-closed | 不解析 handoff Markdown 语义 |
 | repository helper | 解析 handoff header fields、校验 path/header/git 状态、算 hash、输出 relay-export JSON | 不接触浏览器 / 网络 |
 
@@ -31,10 +31,10 @@
 - **handoff 路径正则**（repo 相对，POSIX）：
 
   ```
-  ^\.agent/review_handoffs/pr-[1-9][0-9]*/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\.md$
+  ^\.agent/review_handoffs/(?:pr-[1-9][0-9]*|review-[a-z0-9][a-z0-9-]*)/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\.md$
   ```
 
-- **relay-export 必填字段**：`schema_version`、`repository`、`target_pr`、`handoff_path`、`handoff_sha256`、`full_ref`、`reviewed_head`、`review_stream`、`effective_round`、`package_kind`、`normalized_scope`、`scope_sha256`。约束：`scope_sha256 == sha256(canonical_json(normalized_scope))`。见 `src/relay-contract.ts`。
+- **relay-export 必填字段**：`schema_version`、`repository`、`handoff_path`、`handoff_sha256`、`full_ref`、`reviewed_head`、`review_stream`、`effective_round`、`package_kind`、`normalized_scope`、`scope_sha256`；Stage 3 schema v1.1 另要求 `target_kind` / `target_id`，`target_pr` 仅在 PR mode 有值。v1.0 PR export 仍可由 consumer 推断 `target_kind=pr` 与 `target_id=pr-<N>`。约束：`scope_sha256 == sha256(canonical_json(normalized_scope))`。见 `src/relay-contract.ts` 与 `contracts/relay-export.schema.json`。
 - **helper CLI**：`python <helperPath> relay-export <handoff_path>`，`cwd = repositoryRoot`。成功：stdout **仅一个** JSON 对象；失败：非零退出 + stderr 稳定错误码。见 `src/repo-adapter.ts`。
 - **header fields 非 YAML frontmatter**：scope 等取自正文稳定 header 行（如 `Review scope:`），不要写成 frontmatter。
 
@@ -56,7 +56,7 @@
 - **可返回 phase**：terminal + `SESSION_LOST` + `SEND_UNCERTAIN`（等待切片在 recovery 完成前超时）。后两者视为可重试。
 - **同 fingerprint 重试幂等**：active 则加入现有等待；terminal 则立即返回存储结果。
 - **手动恢复**：仅 `recover_review(handoff_path, confirm_unsent=true)` 可在 terminal `MISMATCH` 后重 dispatch，一次性，须确认原消息未发送。
-- **`TURN_IDLE`**：表示浏览器 transport completion。Stage 1/Stage 2 的 `assistant_output` 只应是非空短确认，formal verdict 必须从目标 PR comment readback；只有 Stage 3 relay-only mode 实现并验收后，`assistant_output` 才可作为正式结论。
+- **`TURN_IDLE`**：表示浏览器 transport completion。PR mode 的 `assistant_output` 只应是非空短确认，formal verdict 必须从目标 PR comment readback；commit-only relay-only mode 的 `assistant_output` 是正式结论。
 
 ## 文档同步
 

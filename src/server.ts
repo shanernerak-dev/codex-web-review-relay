@@ -129,7 +129,7 @@ export function createRelayServer(
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: {tools: {listChanged: false}},
           serverInfo: {name: "codex-web-review-relay", version: "0.1.0"},
-          instructions: "Transport completion is not a formal review verdict; GitHub readback remains external.",
+          instructions: "PR-comment reviews require external GitHub readback; commit-only relay reviews return the formal verdict in assistant_output.",
         },
       });
       return;

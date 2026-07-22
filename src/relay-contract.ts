@@ -5,10 +5,14 @@ export interface SchemaVersion {
   minor: number;
 }
 
+export type RelayTargetKind = "pr" | "commit";
+
 export interface RelayExport {
   schema_version: SchemaVersion;
   repository: string;
-  target_pr: number;
+  target_kind: RelayTargetKind;
+  target_id: string;
+  target_pr: number | null;
   handoff_path: string;
   handoff_sha256: string;
   full_ref: string;
@@ -21,7 +25,7 @@ export interface RelayExport {
   [key: string]: unknown;
 }
 
-export const RELAY_EXPORT_SUPPORT = Object.freeze({major: 1, minMinor: 0, maxMinor: 0});
+export const RELAY_EXPORT_SUPPORT = Object.freeze({major: 1, minMinor: 0, maxMinor: 1});
 
 function requireString(record: Record<string, unknown>, key: string, pattern?: RegExp): string {
   const value = record[key];
@@ -45,10 +49,26 @@ export function validateRelayExport(value: unknown): RelayExport {
   }
 
   requireString(record, "repository", /^[^/\s]+\/[^/\s]+$/);
-  if (!Number.isInteger(record.target_pr) || (record.target_pr as number) < 1) {
+  const handoffPath = requireString(record, "handoff_path");
+  const pathMatch = handoffPath.match(/^\.agent\/review_handoffs\/(?:pr-([1-9][0-9]*)|review-([a-z0-9][a-z0-9-]*))\/([a-z0-9][a-z0-9-]*)\/round-(0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\.md$/);
+  if (!pathMatch) throw new Error("RELAY_EXPORT_INVALID:handoff_path");
+  const inferredKind: RelayTargetKind = pathMatch[1] ? "pr" : "commit";
+  if ((version.minor as number) >= 1 && (record.target_kind === undefined || record.target_id === undefined)) {
+    throw new Error("RELAY_TARGET_IDENTITY_REQUIRED");
+  }
+  const targetKind = record.target_kind === undefined ? inferredKind : record.target_kind;
+  if (targetKind !== "pr" && targetKind !== "commit") throw new Error("RELAY_EXPORT_INVALID:target_kind");
+  if (targetKind !== inferredKind) throw new Error("RELAY_TARGET_PATH_MISMATCH");
+  const targetId = record.target_id === undefined
+    ? (inferredKind === "pr" ? `pr-${pathMatch[1]}` : `review-${pathMatch[2]}`)
+    : record.target_id;
+  requireString({target_id: targetId}, "target_id", inferredKind === "pr" ? /^pr-[1-9][0-9]*$/ : /^review-[a-z0-9][a-z0-9-]*$/);
+  const targetPr = record.target_pr === undefined ? (inferredKind === "pr" ? Number(pathMatch[1]) : null) : record.target_pr;
+  if (inferredKind === "pr") {
+    if (!Number.isInteger(targetPr) || (targetPr as number) < 1 || targetId !== `pr-${targetPr}`) throw new Error("RELAY_EXPORT_INVALID:target_pr");
+  } else if (targetPr !== null) {
     throw new Error("RELAY_EXPORT_INVALID:target_pr");
   }
-  requireString(record, "handoff_path", /^\.agent\/review_handoffs\/pr-[1-9][0-9]*\/[a-z0-9][a-z0-9-]*\/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\.md$/);
   requireString(record, "handoff_sha256", /^[0-9a-f]{64}$/);
   requireString(record, "full_ref", /^refs\/heads\/[A-Za-z0-9._/-]+$/);
   requireString(record, "reviewed_head", /^[0-9a-f]{40}$/);
@@ -67,12 +87,14 @@ export function validateRelayExport(value: unknown): RelayExport {
   if (observedScopeHash !== record.scope_sha256) {
     throw new Error("RELAY_SCOPE_HASH_MISMATCH");
   }
-  return record as RelayExport;
+  return {...record, target_kind: targetKind, target_id: targetId, target_pr: targetPr} as RelayExport;
 }
 
 export function relayFingerprint(relay: RelayExport): string {
   return sha256(canonicalJson({
     repository: relay.repository,
+    target_kind: relay.target_kind,
+    target_id: relay.target_id,
     target_pr: relay.target_pr,
     handoff_path: relay.handoff_path,
     handoff_sha256: relay.handoff_sha256,

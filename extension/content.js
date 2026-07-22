@@ -1,14 +1,19 @@
 (function () {
   "use strict";
   const adapter = globalThis.ReviewRelayDomAdapter;
-  const QUIET_IDLE_MS = 1_500;
-  const OUTPUT_STABILITY_MS = 1_500;
+  const PR_QUIET_IDLE_MS = 1_500;
+  const PR_OUTPUT_STABILITY_MS = 1_500;
+  const RELAY_ONLY_QUIET_IDLE_MS = 2_500;
+  const RELAY_ONLY_OUTPUT_STABILITY_MS = 2_500;
   let active = null;
   function sendLifecycle(type, job, errorCode = null, assistantOutput = null) { return chrome.runtime.sendMessage({kind: "LIFECYCLE", type, jobId: job.jobId, errorCode, ...(assistantOutput !== null ? {assistantOutput} : {})}); }
   function requireLiveDeadline(message) { if (!Number.isFinite(Date.parse(message.deadline)) || Date.now() >= Date.parse(message.deadline)) throw new Error("MESSAGE_DEADLINE_EXPIRED"); }
 
   function monitor(message, state, userAcked = false, assistantStarted = false) {
     const job = {jobId: message.jobId, deadline: Date.parse(message.deadline)};
+    const relayOnly = message.reviewMode === "relay-only";
+    const quietIdleMs = relayOnly ? RELAY_ONLY_QUIET_IDLE_MS : PR_QUIET_IDLE_MS;
+    const outputStabilityMs = relayOnly ? RELAY_ONLY_OUTPUT_STABILITY_MS : PR_OUTPUT_STABILITY_MS;
     active = job;
     let settled = false;
     let inspectRunning = false;
@@ -35,15 +40,18 @@
           const now = Date.now();
           const generating = adapter.isGenerating(document);
           if (assistantStarted && generating) observedGenerating = true;
-          if (assistantStarted && !generating && adapter.isIdle(document)) {
+          const responseIdle = typeof adapter.isResponseIdle === "function"
+            ? adapter.isResponseIdle(document)
+            : adapter.isIdle(document);
+          if (assistantStarted && !generating && responseIdle) {
             const output = adapter.rawTurnText(document, assistantNode);
             if (output !== candidateOutput) {
               candidateOutput = output;
               candidateOutputSince = now;
             }
-            const quiet = now - Math.max(lastMutationAt, assistantStartedAt) >= QUIET_IDLE_MS;
-            const stable = candidateOutput.length > 0 && now - candidateOutputSince >= OUTPUT_STABILITY_MS;
-            const completionObserved = observedGenerating || now - assistantStartedAt >= OUTPUT_STABILITY_MS;
+            const quiet = now - Math.max(lastMutationAt, assistantStartedAt) >= quietIdleMs;
+            const stable = candidateOutput.length > 0 && now - candidateOutputSince >= outputStabilityMs;
+            const completionObserved = relayOnly || observedGenerating || now - assistantStartedAt >= outputStabilityMs;
             if (quiet && stable && completionObserved) { await sendLifecycle("TURN_IDLE", job, null, candidateOutput); finish(); }
           }
         } while (inspectPending && !settled);

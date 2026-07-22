@@ -17,6 +17,9 @@ const TERMINAL_PHASES = new Set<JobPhase>(["TURN_IDLE", "BLOCKED", "MISMATCH", "
 export interface TransportStatus {
   job_id: string;
   fingerprint: string;
+  target_kind: RelayExport["target_kind"];
+  target_id: string;
+  target_pr: number | null;
   handoff_path: string;
   handoff_sha256: string;
   reviewed_head: string;
@@ -29,9 +32,13 @@ export interface TransportStatus {
 }
 
 function publicStatus(job: StoredJob): TransportStatus {
+  const relay = validateRelayExport(JSON.parse(job.relay_json));
   return {
     job_id: job.job_id,
     fingerprint: job.fingerprint,
+    target_kind: relay.target_kind,
+    target_id: relay.target_id,
+    target_pr: relay.target_pr,
     handoff_path: job.handoff_path,
     handoff_sha256: job.handoff_sha256,
     reviewed_head: job.reviewed_head,
@@ -141,6 +148,7 @@ export class ReviewTransportService {
         jobId: current.job_id,
         fingerprint,
         envelope: renderTriggerEnvelope(relay),
+        reviewMode: relay.target_kind === "commit" ? "relay-only" : "pr-comment",
         deadline: current.deadline,
       });
       const accepted = this.bridge.expectOutboundAck(dispatch);
@@ -173,6 +181,7 @@ export class ReviewTransportService {
         jobId: current.job_id,
         fingerprint,
         envelope: renderTriggerEnvelope(relay),
+        reviewMode: relay.target_kind === "commit" ? "relay-only" : "pr-comment",
         deadline: current.deadline,
         allowUnsentSend: this.store.claimRecoverySend(current.job_id),
       });

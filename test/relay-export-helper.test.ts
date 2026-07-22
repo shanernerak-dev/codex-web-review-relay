@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 const HANDOFF = ".agent/review_handoffs/pr-2/main/round-01-review-fix.md";
+const COMMIT_HANDOFF = ".agent/review_handoffs/review-local-run/main/round-01-review-request.md";
 const HELPER_SOURCE = resolve("scripts/tools/relay_export_helper.py");
 
 function git(root: string, ...args: string[]): void {
@@ -29,12 +30,26 @@ function validHandoff(): string {
   ].join("\n");
 }
 
-function createRepo(content: string | Buffer, commit = true): string {
+function validCommitHandoff(): string {
+  return [
+    "# Commit Review Request",
+    "",
+    "Package kind: `review-request`",
+    "Review stream: `main`",
+    "Effective round: `1`",
+    "Target kind: `commit`",
+    "Target ID: `review-local-run`",
+    "Review scope: relay-only contract",
+    "",
+  ].join("\n");
+}
+
+function createRepo(content: string | Buffer, commit = true, handoffPath = HANDOFF): string {
   const root = mkdtempSync(join(tmpdir(), "relay-helper-test-"));
-  mkdirSync(join(root, ".agent", "review_handoffs", "pr-2", "main"), {recursive: true});
+  mkdirSync(join(root, ...handoffPath.split("/").slice(0, -1)), {recursive: true});
   mkdirSync(join(root, "scripts", "tools"), {recursive: true});
   copyFileSync(HELPER_SOURCE, join(root, "scripts", "tools", "relay_export_helper.py"));
-  writeFileSync(join(root, HANDOFF), content, "utf8");
+  writeFileSync(join(root, ...handoffPath.split("/")), content);
   git(root, "init", "-q");
   git(root, "config", "core.autocrlf", "false");
   git(root, "remote", "add", "origin", "https://github.com/example/relay.git");
@@ -52,8 +67,8 @@ function runHelper(root: string, path = HANDOFF) {
   });
 }
 
-function withRepo<T>(content: string, fn: (root: string) => T): T {
-  const root = createRepo(content);
+function withRepo<T>(content: string, fn: (root: string) => T, handoffPath = HANDOFF): T {
+  const root = createRepo(content, true, handoffPath);
   try {
     return fn(root);
   } finally {
@@ -72,6 +87,19 @@ test("generic relay-export helper validates all identity headers and scope", () 
     assert.equal(payload.package_kind, "review-fix");
     assert.deepEqual(payload.normalized_scope, ["helper contract"]);
   });
+});
+
+test("generic relay-export helper supports commit-only handoffs without a PR", () => {
+  withRepo(validCommitHandoff(), (root) => {
+    const result = runHelper(root, COMMIT_HANDOFF);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.schema_version.minor, 1);
+    assert.equal(payload.target_kind, "commit");
+    assert.equal(payload.target_id, "review-local-run");
+    assert.equal(payload.target_pr, null);
+    assert.equal(payload.handoff_path, COMMIT_HANDOFF);
+  }, COMMIT_HANDOFF);
 });
 
 test("generic relay-export helper rejects missing or duplicate stable headers", () => {

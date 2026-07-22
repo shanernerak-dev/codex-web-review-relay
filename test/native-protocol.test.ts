@@ -44,6 +44,7 @@ test("native bridge correlates session and lifecycle events", () => {
     deadline: job.deadline,
   });
   assert.equal(dispatch.type, "DISPATCH_TRIGGER");
+  assert.equal(dispatch.reviewMode, "pr-comment");
   bridge.markDispatchWritten(job.job_id);
   for (const [type, phase] of [
     ["USER_TURN_ACKED", "USER_TURN_ACKED"],
@@ -66,6 +67,23 @@ test("native bridge correlates session and lifecycle events", () => {
   assert.equal(store.getJob(job.job_id).assistant_output_sha256, sha256("formal verdict output"));
   store.close();
   rmSync(root, {recursive: true, force: true});
+});
+
+test("native dispatch carries relay-only mode for commit-only targets", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-commit-mode-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const coordinator = new JobCoordinator(store);
+  const bridge = new NativeBridge(coordinator, 60_000);
+  const relay = relayFixture({
+    schema_version: {major: 1, minor: 1}, target_kind: "commit", target_id: "review-local-run", target_pr: null,
+    handoff_path: ".agent/review_handoffs/review-local-run/main/round-01-review-request.md",
+  });
+  const fingerprint = relayFingerprint(relay);
+  const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm", sessionId: "session-1", extensionVersion: "0.1.0"});
+  const dispatch = bridge.createDispatch({sessionId: "session-1", jobId: job.job_id, fingerprint, envelope: renderTriggerEnvelope(relay), reviewMode: "relay-only", deadline: job.deadline});
+  assert.equal(dispatch.reviewMode, "relay-only");
+  store.close(); rmSync(root, {recursive: true, force: true});
 });
 
 test("native bridge rejects oversized assistant output before completing the job", () => {
@@ -120,7 +138,7 @@ test("native bridge rejects unsupported minor and records peer version", () => {
   const store = new JobStore(join(root, "state.sqlite"));
   const bridge = new NativeBridge(new JobCoordinator(store));
   assert.throws(
-    () => bridge.handleInbound({schemaVersion: {major: 1, minor: 1}, type: "ARM_SESSION"}),
+    () => bridge.handleInbound({schemaVersion: {major: 1, minor: 2}, type: "ARM_SESSION"}),
     /NATIVE_SCHEMA_MINOR_UNSUPPORTED/,
   );
   bridge.handleInbound({

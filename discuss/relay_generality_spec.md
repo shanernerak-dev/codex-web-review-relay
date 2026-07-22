@@ -4,10 +4,12 @@
 
 ## 状态
 
-- 当前阶段：Stage 2（进行中）。
+- 当前阶段：Stage 3（进行中）。
 - Stage 1 acceptance：已由 Maintainer 批准进入 Stage 2；round-04 review-fix 在 reviewed head `09c0e063214646542666c5dda8057cd46b404d59` 返回 `PASS`，并确认 `RGEN-S1-005` / `RGEN-S1-006` 为 `ACCEPTED`。该记录不等同于 Ready、Issue acceptance 或 merge authorization。
 - Stage 2 canonical review identity：`stage2-main/round-01-review-request`。此前 `main/round-05` 仅作为 Stage 2 初次尝试的历史评审记录保留；按 Stage-scoped round convention，当前 Stage 2 从 `round-01` 重新计数。
-- Stage 2 review gate：`stage2-main/round-02` 在 reviewed head `7d7eacb46adf96f09ccbe1f9a8b0a2019c6146be` 返回 `PASS`，`RGEN-S2-001` / `RGEN-S2-004` 为 `ACCEPTED`，既有 `RGEN-S2-002` / `RGEN-S2-003` 保持锁定。该结果不等同于 Stage 2 acceptance、Stage 3 transition、Ready 或 merge authorization。
+- Stage 2 review gate：`stage2-main/round-02` 在 reviewed head `7d7eacb46adf96f09ccbe1f9a8b0a2019c6146be` 返回 `PASS`，`RGEN-S2-001` / `RGEN-S2-004` 为 `ACCEPTED`，既有 `RGEN-S2-002` / `RGEN-S2-003` 保持锁定；`round-03` 的 producer compatibility evidence amendment 也返回 `PASS`。
+- Stage 2 acceptance：Maintainer 于 2026-07-22 明确批准进入 Stage 3。该 acceptance 不等同于 Stage 3 acceptance、Ready、merge authorization 或 producer Issue closeout。
+- Stage 3 canonical review identity：`stage3-main/round-01-review-request`；Stage 3 round 独立从 `round-01` 计数。
 - 跨仓库适配跟踪：producer `David-JA/single-crystal-stress#44`，用于记录本仓库 generic helper/config 变化对 single-crystal 现有使用方式的影响，并在本 PR 收尾后完成 producer-side readback。
 - Producer-side readback：已使用 producer 当前 `scripts/tools/check_stage_gate_readiness.py` 对历史 tracked handoff 做 v1.0 relay-export readback，exit code `0`；证据与迁移命令已记录在 Issue #44 comment `5045654662`。当前 producer checkout 无 active handoff，Issue 保持 open，等待未来 live handoff 与 companion PR closeout。
 - 关联 PR：本 spec 与全部 stage 改动进入同一个 PR（Stage 1 段 2 创建）。**Stage 3 完成且 README/contract 重新对齐前，PR 必须保持 Draft 状态，禁止 merge。**

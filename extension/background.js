@@ -53,7 +53,7 @@ async function onNativeMessage(message) {
   try {
     const page = await chrome.tabs.sendMessage(armed.tabId, {kind: "GET_PAGE_STATE"});
     if (!page?.ok || !page.adapterReady) throw new Error("PAGE_BINDING_DRIFT");
-    const response = await chrome.tabs.sendMessage(armed.tabId, {kind: message.type, jobId: message.jobId, envelope: message.envelope, deadline: message.deadline, allowUnsentSend: message.allowUnsentSend});
+    const response = await chrome.tabs.sendMessage(armed.tabId, {kind: message.type, jobId: message.jobId, envelope: message.envelope, reviewMode: message.reviewMode, deadline: message.deadline, allowUnsentSend: message.allowUnsentSend});
     if (!response?.ok) throw new Error(response?.errorCode ?? "CONTENT_DISPATCH_REJECTED");
     ensurePort().postMessage({schemaVersion: SCHEMA_VERSION, type: `${message.type}_ACCEPTED`, responseToRequestId: message.requestId, sessionId: armed.sessionId, jobId: message.jobId});
   } catch (error) {

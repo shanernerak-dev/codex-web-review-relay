@@ -36,7 +36,8 @@ function harness(ackDelayMs = 0) {
     rawText: (node: any) => node?.innerText ?? "",
     rawTurnText: (_document: unknown, _node: any) => assistantOutput,
     isGenerating: () => generating,
-    isIdle: () => !generating,
+    isResponseIdle: () => !generating,
+    isIdle: () => { throw new Error("COMPOSER_NOT_REQUIRED_FOR_RESPONSE_IDLE"); },
   };
   const chrome = {
     runtime: {
@@ -68,12 +69,13 @@ function harness(ackDelayMs = 0) {
   context.globalThis = context;
   vm.runInContext(readFileSync(resolve("extension/content.js"), "utf8"), context, {filename: "content.js"});
 
-  function dispatch(deadlineMs = 10_000) {
+  function dispatch(deadlineMs = 10_000, reviewMode = "pr-comment") {
     const response = new Promise<any>((resolveResponse) => {
       runtimeListeners[0]({
         kind: "DISPATCH_TRIGGER",
         jobId: "job-1",
         envelope: "Path: x",
+        reviewMode,
         deadline: new Date(Date.now() + deadlineMs).toISOString(),
       }, {}, resolveResponse);
     });
@@ -138,6 +140,21 @@ test("content monitor waits for the complete stable output after a partial bubbl
   h.mutate();
   await waitFor(() => h.events.includes("TURN_IDLE"), 5_500);
   assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "Stage C Runtime Follow-up Round complete");
+});
+
+test("relay-only monitor waits for a long response without requiring composer idle identity", async () => {
+  const h = harness();
+  assert.equal((await h.dispatch(10_000, "relay-only")).ok, true);
+  h.setUser(true);
+  h.setAssistant(true);
+  h.setGenerating(true);
+  h.mutate();
+  await waitFor(() => h.events.includes("ASSISTANT_STARTED"));
+  h.setAssistantOutput("A long formal verdict that is returned directly through assistant_output");
+  h.setGenerating(false);
+  h.mutate();
+  await waitFor(() => h.events.includes("TURN_IDLE"), 7_000);
+  assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "A long formal verdict that is returned directly through assistant_output");
 });
 
 test("expired dispatch and recovery fail before any DOM write or click", async () => {
