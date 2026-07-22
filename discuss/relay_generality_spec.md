@@ -16,6 +16,16 @@
 1. 不绑死 producer 仓库：companion 仓库自身、以及任意外部仓库，都能仅凭 README + 本仓库 helper 范例完成安装、配置、首次 review。
 2. 不绑死"靠 GitHub PR comment 做 web→repo 交接"：除 PR-comment 模式外，支持"无 PR + 对话内长评审"模式，verdict 经 relay `assistant_output` 回传即为正式结论。
 
+### 通用 target identity 决策
+
+本 spec 保留“真正无 PR + 对话内长评审”目标，采用**扩展 relay-export contract**的路线，不使用虚构 PR 编号、已关闭 PR 或 sentinel 值绕过现有校验。
+
+- 现有 v1.0 PR 形态继续兼容：`target_pr` 为正整数，handoff 使用 `pr-<N>` identity。
+- Stage 3 为 commit-only review 增加 `target_kind` / `target_id`：`target_kind=pr` 保留现有 PR 语义，`target_kind=commit` 使用稳定的 repo-local review identity，不要求 `target_pr` 或 open PR。
+- commit-only handoff 增加非 PR 路径形态（例如 `.agent/review_handoffs/review-<id>/...`）；`full_ref` 与 `reviewed_head` 仍是远端取证定位字段。
+- commit-only fingerprint 必须包含 target kind、target identity、handoff hash、ref、reviewed head、stream、round、package kind 和 scope hash，避免不同 review target 发生幂等碰撞。
+- Stage 3 必须定义向后兼容的 schema version、validator、helper 输出和 MCP/native contract 迁移；在该 contract 落地前，不得宣称已支持无 PR 模式。
+
 ## 背景与根因（dry run 结论，作为本 spec 的事实基础）
 
 - 基线 `43c33e4` 的 completion detection 是为"对话只回短确认、verdict 写 PR comment"设计的；该模式下 web agent 对话回复短，1500ms 稳定窗口可正确触发 `TURN_IDLE`。
@@ -29,23 +39,23 @@
 ## 范围 / 非范围
 
 - 范围：transport 回退到基线以恢复 PR-comment 模式跑通；spec 与三层 agent 约定对齐 producer 范本；helper/README 通用化文档；最后实现并测试"无 PR + 对话内长评审"通用模式。
-- 非范围：不重写 MCP server / job store / native bridge 的核心契约；不改 relay-export schema；不引入云端依赖；不动 producer 仓库。
+- 非范围：不引入云端依赖；不动 producer 仓库；不在 Stage 1/2 提前改变已验证的 PR transport 行为。Stage 3 明确包含 relay-export schema、validator、fingerprint 以及 MCP/native contract 的兼容性设计与实现。
 
 ## Stage 表
 
 | Stage | 目标 | 主要产物 | 是否动传输代码 | 验收标准 |
 |---|---|---|---|---|
-| 1 | 用 PR-comment 模式跑通一次 review-fix | 新分支 + draft PR + transport 回退基线 + 本 spec 骨架 + ≥1 轮有效 verdict | 否（回退，不新写） | relay 捕到短确认（`TURN_IDLE` 且 `assistant_output` 非空）+ GitHub readback 到 PR comment 或对话 verdict |
+| 1 | 用 PR-comment 模式跑通一次 review-fix | 新分支 + draft PR + transport 回退基线 + 本 spec 骨架 + ≥1 轮有效 verdict | 否（回退，不新写） | relay 捕到短确认（`TURN_IDLE` 且 `assistant_output` 非空）+ formal verdict 已发布并可从目标 PR comment readback |
 | 2 | 让 companion 成为可照搬范例（框架） | conventions/AGENTS/workflow 对齐 producer 范本 + handoff cleanup 规则 + helper 校验 | 否 | 文档自洽、路由闭合、helper `relay-export` 自检通过、中英 README 同步 |
-| 3 | 通用化：无 PR + 对话内长评审 | 新 envelope 指令 + 重写的 completion detection + targeted tests | 是 | 无 open PR 场景下端到端跑通 + 不回归 PR-comment 模式 + tests 绿 |
+| 3 | 通用化：commit-only review + 对话内长评审 | target identity/schema 扩展 + 新 envelope 指令 + 重写的 completion detection + targeted tests | 是 | 无 open PR 场景下端到端跑通 + 不回归 v1 PR-comment 模式 + tests 绿 |
 
 ## 关键不变量（跨 stage 必须保持）
 
 - trigger envelope 仅含 6 个动态定位字段 + 固定指令，**绝不内嵌 handoff 正文**；reviewer 凭 `Path` 与 `reviewed head` 在远端读 commit / handoff。开源仓库经 commit 取证是不可动摇的基础。
-- `target_pr` 必须指向**当前 open、正在审的 PR**，`reviewed_head` 落在该 PR 的 diff 作用域内；不得指向已 merge 的 PR。**注意**：此检查是 **caller-side orchestration preflight**（由 Repo Agent 在触发 `request_review` 前经 GitHub API 独立验证），**不是** native host / helper / transport 的 fail-closed 不变量。当前 `src/relay-contract.ts` 只验证 `target_pr` 是正整数、`reviewed_head` 是 40 字符 SHA 格式；remote PR-head equality 由 Repo Agent 负责。后续 stage 若需自动化此 preflight，应设计为独立的、具有 GitHub read capability 的层，不属于 localhost native host/helper。
+- PR 模式下，`target_pr` 必须指向**当前 open、正在审的 PR**，`reviewed_head` 落在该 PR 的 diff 作用域内；不得指向已 merge 的 PR。commit-only 模式不要求 `target_pr` 或 open PR，但必须使用已定义的 `target_kind` / `target_id` contract，并以 `full_ref` + `reviewed_head` 完成远端取证。PR 状态和 PR-head equality 检查属于 **caller-side orchestration preflight**（由 Repo Agent 在触发 `request_review` 前经 GitHub API 独立验证），不是 native host / helper / transport 的 fail-closed 不变量。
 - fail-closed（transport 层）：path escape / hash mismatch / detached HEAD / 缺 session，均中止于 dispatch 前。
 - `TURN_IDLE` 只描述 transport 完成；verdict 的正式来源按模式声明——PR-comment 模式以 GitHub readback 为准，无 PR 模式以 `assistant_output` 为准（由 conventions 明确，不混淆）。
-- handoff 路径正则、relay-export 必填字段与 `scope_sha256 == sha256(canonical_json(normalized_scope))` 约束不变。
+- v1 PR 模式的 handoff 路径正则、relay-export 字段与 `scope_sha256 == sha256(canonical_json(normalized_scope))` 约束保持兼容；Stage 3 为 commit-only 模式增加对应的路径形态、target identity 字段和 schema version 规则。
 
 ## 授权与轮次（对齐 producer，不写无条件硬上限）
 
@@ -57,7 +67,7 @@
 
 - transport 文件 `extension/content.js`、`src/envelope.ts` 与基线 `43c33e4` 逐字节一致（`git diff 43c33e4 -- <files>` 为空）。
 - 存在 open draft PR，`target_pr` = 该 PR 编号，`reviewed_head` = 分支 tip。
-- 至少完成一轮：relay 返回 `TURN_IDLE` 且 `assistant_output` 非空（短确认），或 web agent 经 PR comment 给出可 readback 的 verdict。
+- 至少完成一轮：relay 返回 `TURN_IDLE` 且 `assistant_output` 非空（短确认），**并且** web agent 已将完整 formal verdict 发布到目标 PR comment，且该 verdict 能由预期 actor 在当前 `reviewed_head` / `Review scope` 下独立 readback。Stage 1 的短 `assistant_output` 只能作为 transport evidence，不能替代 PR-comment formal gate。
 - 若 web agent 给 `REQUEST CHANGES`，在该分支上修复并进入 round-02，最多 5 轮。
 
 ## 风险与回退
