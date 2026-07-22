@@ -10,7 +10,7 @@ export const FORMAL_REVIEW_PUBLICATION_INSTRUCTION =
   "After completing the review, publish the formal verdict as a GitHub PR comment following the repository convention (optional — returning the verdict in this conversation via the relay channel is sufficient).";
 
 export const REVIEW_EXECUTION_INSTRUCTION =
-  "请基于你的预读上下文，现在执行正式评审。请直接以纯文本形式在本对话中输出完整评审结论，不要使用工具、不要读取文件、不要使用 canvas 或 artifact。一次性输出完整结论。";
+  "请基于你的预读上下文和 trigger envelope 中的信息，现在执行正式评审。如果你能访问仓库文件，请读取验证；如果不能，请基于预读基线和 handoff 中的修复摘要评审。以纯文本形式输出完整评审结论。";
 
 export function renderTriggerEnvelope(relay: RelayExport): TriggerEnvelope {
   const text = [

@@ -35,16 +35,16 @@
           const now = Date.now();
           const generating = adapter.isGenerating(document);
           if (assistantStarted && generating) observedGenerating = true;
-          if (assistantStarted && !generating && adapter.isIdle(document)) {
+          if (assistantStarted) {
             const output = adapter.rawTurnText(document, assistantNode);
             if (output !== candidateOutput) {
               candidateOutput = output;
               candidateOutputSince = now;
             }
-            const quiet = candidateOutput.length > 0 && now - candidateOutputSince >= QUIET_IDLE_MS;
-            const stable = candidateOutput.length > 0 && now - candidateOutputSince >= OUTPUT_STABILITY_MS;
-            const completionObserved = observedGenerating || now - assistantStartedAt >= 120_000;
-            if (quiet && stable && completionObserved) { await sendLifecycle("TURN_IDLE", job, null, candidateOutput); finish(); }
+            const outputStable = candidateOutput.length > 0 && now - candidateOutputSince >= OUTPUT_STABILITY_MS;
+            const pageIdle = !generating && adapter.isIdle(document);
+            const timeFallback = now - assistantStartedAt >= 120_000;
+            if (outputStable && (pageIdle || timeFallback)) { await sendLifecycle("TURN_IDLE", job, null, candidateOutput); finish(); }
           }
         } while (inspectPending && !settled);
       } catch (error) { await sendLifecycle(userAcked ? "SESSION_LOST" : "SEND_UNCERTAIN", job, error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_MONITOR_ERROR"); finish(); }
