@@ -11,11 +11,11 @@
 - Stage 2 acceptance：Maintainer 于 2026-07-22 明确批准进入 Stage 3。该 acceptance 不等同于 Stage 3 acceptance、Ready、merge authorization 或 producer Issue closeout。
 - Stage 3 round-01 review：reviewed head `4e77def8253c013e1911c1630060a32f20390867` 返回 `REQUEST CHANGES`，`RGEN-S3-001` 至 `RGEN-S3-005` 已记录；该 handoff 保持 append-only。
 - Stage 3 round-02 review：reviewed head `981c7ce` 返回 `REQUEST CHANGES`；`RGEN-S3-001` / `RGEN-S3-005` 已 `ACCEPTED`，`RGEN-S3-002` / `RGEN-S3-003` / `RGEN-S3-004` / `RGEN-S3-006` 保持开放。
-- Stage 3 canonical review identity：`stage3-main/round-02-review-fix`，reviewed head `4bb6ed678f63378442ac3c7e33fa1d876fa2050c`；Stage 3 round 独立从 `round-01` 计数，round-02 已复审但尚未 acceptance。
+- Stage 3 canonical review identity：`stage3-main/round-04-evidence-amendment`，reviewed head `1006a6c983f5cb336f226a0e5972c925431d4d4b`；Stage 3 round 独立从 `round-01` 计数。round-04 formal review 已返回 `REQUEST CHANGES`，但 relay transport 为 `TIMEOUT` 且未持久化 `assistant_output`；该 verdict 来自 Maintainer-attended 浏览器 readback，不构成 Stage 3 acceptance。
 - Stage 3 round-03 review handoff：implementation head `9776bd0a6ef374f5046db261f0e0fac147b01a89`，已修复 round-02 的 `RGEN-S3-002` / `RGEN-S3-003` / `RGEN-S3-004` / `RGEN-S3-006`，等待复审。
 - Stage 3 round-03 transport：因浏览器绑定 stale 结束为 `SESSION_LOST`，evidence amendment 保持 `Effective round=3`，未产生 formal verdict。
 - Stage 3 round-04 review handoff：implementation head `084b588`，补充修复 extension `Disarm` / `Arm` session lifecycle，等待复审。
-- Stage 3 round-04 current-head amendment：implementation commit `b5edfe1` 已补齐 round-03 verdict 的 `RGEN-S3-002` / `RGEN-S3-003` / `RGEN-S3-007` residual，并保留 extension lifecycle fix；新的 `round-04-evidence-amendment` 等待复审，历史 handoff 保持 append-only。
+- Stage 3 round-04 current-head amendment：implementation commit `b5edfe1` 已补齐 round-03 verdict 的 `RGEN-S3-002` / `RGEN-S3-003` / `RGEN-S3-007` residual，并保留 extension lifecycle fix；该 amendment 的 formal review 新增 `RGEN-S3-008`（active job 期间 Disarm 的 lifecycle/recovery 风险）与 `RGEN-S3-009`（canonical round history 与当前 review chain 不一致），历史 handoff 保持 append-only。
 - 跨仓库适配跟踪：producer `David-JA/single-crystal-stress#44`，用于记录本仓库 generic helper/config 变化对 single-crystal 现有使用方式的影响，并在本 PR 收尾后完成 producer-side readback。
 - Producer-side readback：已使用 producer 当前 `scripts/tools/check_stage_gate_readiness.py` 对历史 tracked handoff 做 v1.0 relay-export readback，exit code `0`；证据与迁移命令已记录在 Issue #44 comment `5045654662`。当前 producer checkout 无 active handoff，Issue 保持 open，等待未来 live handoff 与 companion PR closeout。
 - 关联 PR：本 spec 与全部 stage 改动进入同一个 PR（Stage 1 段 2 创建）。**Stage 3 完成且 README/contract 重新对齐前，PR 必须保持 Draft 状态，禁止 merge。**
@@ -38,6 +38,21 @@
 - commit-only handoff 增加非 PR 路径形态（例如 `.agent/review_handoffs/review-<id>/...`）；`full_ref` 与 `reviewed_head` 仍是远端取证定位字段。
 - commit-only fingerprint 必须包含 target kind、target identity、handoff hash、ref、reviewed head、stream、round、package kind 和 scope hash，避免不同 review target 发生幂等碰撞；PR mode 必须继续使用 Stage 3 之前的 fingerprint 字段序列，保证升级兼容。
 - Stage 3 必须定义向后兼容的 schema version、validator、helper 输出和 MCP/native contract 迁移；在该 contract 落地前，不得宣称已支持无 PR 模式。
+
+### Assistant turn capture 与 review completion
+
+Stage 3 的完整评审回传采用“结构化 turn 提取 + relay completion ACK”模型，参考本仓库已下载的 `reference/SyncNos-Webclipper`，但不复制其产品层命名或 autosave 语义。
+
+- `jobId` / envelope identity 只负责把 relay transport、native host 和本次 `request_review` 关联起来；它不直接等同于 ChatGPT DOM 中的消息 identity。
+- extension 在 dispatch 前记录当前会话已有的 turn identity 集合或最后一个稳定 turn anchor；dispatch 后只收集新增或发生变化的 turn，不以“当前页面最新 assistant bubble”作为唯一依据。
+- turn identity 优先来自稳定的 DOM 属性（例如 `data-turn-id`、`data-message-id`、`data-testid` 或 `id`），并保留 `user`、`assistant`、`tool` 等角色的文档顺序。若网页重渲染导致节点替换，只要 identity 不变，就继续合并该 turn 的新内容。
+- capture 层必须支持多次轮询的增量 harvest：按 turn identity 去重、按文档顺序重组，并在延迟 hydration、DOM 重渲染或虚拟化场景下补采未完成的 turn；不能因为某一次轮询暂时只看到部分节点就 terminalize。
+- 本次 review 的正式 `assistant_output` 是 dispatch 后新增 assistant review turn（或该 review 产生的连续 assistant turn 集合）的完整文本。capture 层必须保存本次 job 的 turn anchor，避免把历史 assistant 回复或其他并发内容混入结果。
+- `TURN_IDLE` 只在目标 turn 已经出现明确的 turn-level completion evidence、内容在连续轮询中保持稳定，并且 native host 对该 job 返回成功 ACK 后成立。普通文本静默、单独消失的 stop button、代码块的 `Copy code` 按钮或“曾经观察到 generating”均不是充分完成证据。
+- `assistant_output_sha256` 是完整性、去重和 reconnect/retry 审计字段，不负责判断 turn 属于哪一轮，也不要求把 hash 设计成独立的 completion 状态机。若输出尚未完成，hash 只能描述当前快照，不能作为 formal verdict evidence。
+- 如果 lifecycle ACK 返回 `{ok:false}`，extension 必须继续保持可恢复监控或显式进入 recovery；不得把失败响应当作成功并停止 observer。native host 未 ACK 前不得将本次 capture 视为已交付。
+
+该模型将“完整对话分割”和“评审完成确认”明确分层：前者确保 turn、角色、顺序和内容不遗漏；后者确认这些内容确实属于本次 job、已经停止生成，并已被 native host 接收。
 
 ## 背景与根因（dry run 结论，作为本 spec 的事实基础）
 
@@ -62,12 +77,20 @@
 | 2 | 让 companion 成为可照搬范例（框架） | conventions/AGENTS/workflow 对齐 producer 范本 + handoff cleanup 规则 + helper 校验 | 否 | 文档自洽、路由闭合、helper `relay-export` 自检通过、中英 README 同步 |
 | 3 | 通用化：commit-only review + 对话内长评审 | target identity/schema 扩展 + 新 envelope 指令 + 重写的 completion detection + targeted tests | 是 | 无 open PR 场景下端到端跑通 + 不回归 v1 PR-comment 模式 + tests 绿 |
 
+### Stage 3 turn capture 验收边界
+
+- 必须有针对真实 ChatGPT conversation DOM 的 turn identity capture 测试：至少覆盖多轮、多角色、代码块、DOM 重渲染、延迟 hydration 和部分 turn 后继续生成。
+- 必须证明 dispatch 前已有的 assistant turns 不会进入本次 `assistant_output`，且 dispatch 后新增 turn 的文本按 DOM 顺序完整保留。
+- 必须覆盖同一 turn 多次轮询的增量合并，以及 turn 节点替换但 identity 不变时的继续收集。
+- 必须覆盖 lifecycle 返回 `{ok:false}` 的情况：observer 不得静默停止，job 不得被错误 terminalize。
+- acceptance evidence 应同时记录 `jobId`、目标 turn identity、完整输出首尾 anchor、`assistant_output_sha256` 和 native `TURN_IDLE` ACK；其中 hash 是校验与审计证据，不替代 turn identity 或 completion evidence。
+
 ## 关键不变量（跨 stage 必须保持）
 
 - PR trigger envelope 仅含 6 个动态定位字段 + 固定指令；commit-only envelope 在此基础上增加 `target_kind` / `target_id`。两种 envelope 都**绝不内嵌 handoff 正文**；reviewer 凭 locator 与 `reviewed head` 在远端读 commit / handoff。开源仓库经 commit 取证是不可动摇的基础。
 - PR 模式下，`target_pr` 必须指向**当前 open、正在审的 PR**，`reviewed_head` 落在该 PR 的 diff 作用域内；不得指向已 merge 的 PR。commit-only 模式不要求 `target_pr` 或 open PR，但必须使用已定义的 `target_kind` / `target_id` contract，并以 `full_ref` + `reviewed_head` 完成远端取证。PR 状态和 PR-head equality 检查属于 **caller-side orchestration preflight**（由 Repo Agent 在触发 `request_review` 前经 GitHub API 独立验证），不是 native host / helper / transport 的 fail-closed 不变量。
 - fail-closed（transport 层）：path escape / hash mismatch / detached HEAD / 缺 session，均中止于 dispatch 前。
-- `TURN_IDLE` 只描述 transport 完成；Stage 1/Stage 2 的 v1 PR-comment mode 以 GitHub readback 为 formal verdict 来源。当前 Stage 3 acceptance review 由 Maintainer 明确授权 commit-only pilot 使用完整 `assistant_output` 作为本轮验收的 formal source；该 pilot 不代表一般可用性，只有 Stage 3 acceptance 后才成为对外契约。
+- `TURN_IDLE` 只描述 transport 完成；Stage 1/Stage 2 的 v1 PR-comment mode 以 GitHub readback 为 formal verdict 来源。当前 Stage 3 acceptance review 由 Maintainer 明确授权 commit-only pilot 使用完整 `assistant_output` 作为本轮验收的 formal source；该 pilot 不代表一般可用性，只有 Stage 3 acceptance 后才成为对外契约。commit-only capture 必须遵守本 spec 的“Assistant turn capture 与 review completion”模型。
 - v1 PR 模式的 handoff 路径正则、relay-export 字段与 `scope_sha256 == sha256(canonical_json(normalized_scope))` 约束保持兼容；Stage 3 为 commit-only 模式增加对应的路径形态、target identity 字段和 schema version 规则。
 
 ## 授权与轮次（按 Stage 独立计数；对齐 producer，不写无条件硬上限）
@@ -94,3 +117,5 @@
 - producer 仓库 `docs/workflows/web_agent_stage_gate.md`（流程契约，结构参考）。
 - producer 仓库 `docs/workflows/agent_conventions.md`（agent 约定范本，结构参考）。
 - 本仓库 `docs/agent_conventions.md`、`docs/workflows/review_fix_workflow.md`、`AGENTS.md`（Stage 2 将据此对齐 producer 范本）。
+- 本仓库已下载的 `reference/SyncNos-Webclipper/SyncNos-SyncNos-Webclipper-534b8cb/src/collectors/chatgpt/chatgpt-collector.ts`（turn identity、角色顺序、跨轮 harvest 与去重参考）。
+- 本仓库已下载的 `reference/SyncNos-Webclipper/SyncNos-SyncNos-Webclipper-534b8cb/src/collectors/runtime-observer.ts` 与 `src/services/conversations/content/autosave-incremental-engine.ts`（DOM 变化观察与增量合并参考）。
