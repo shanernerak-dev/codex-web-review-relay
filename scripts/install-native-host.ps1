@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)] [string]$RepositoryRoot,
     [string]$NodeExecutable = 'node',
     [string]$PythonExecutable = 'python',
+    [string]$HelperPath = 'scripts/tools/relay_export_helper.py',
     [switch]$Remove
 )
 
@@ -29,6 +30,7 @@ if ($Remove) {
 }
 
 if (-not (Test-Path -LiteralPath $repo -PathType Container)) { throw "RepositoryRoot does not exist: $repo" }
+if ([System.IO.Path]::IsPathRooted($HelperPath)) { throw 'HelperPath must be repository-relative.' }
 $node = (Get-Command $NodeExecutable -ErrorAction Stop).Source
 $python = (Get-Command $PythonExecutable -ErrorAction Stop).Source
 if (-not $PSCmdlet.ShouldProcess($install, 'Install review relay native host')) { return }
@@ -55,7 +57,7 @@ $tokenText = [Convert]::ToBase64String($tokenBytes)
 $config = [ordered]@{
     listenHost = '127.0.0.1'; listenPort = 43127; allowedOrigins = @('http://127.0.0.1:43127')
     bearerTokenPath = $tokenPath; stateDbPath = $statePath; repositoryRoot = $repo
-    pythonExecutable = $python; helperPath = 'scripts/tools/check_stage_gate_readiness.py'
+    pythonExecutable = $python; helperPath = $HelperPath
     nativeHostName = $hostName; extensionId = $extensionId
     requestWaitSliceMs = 300000; turnDeadlineMs = 1800000
 }

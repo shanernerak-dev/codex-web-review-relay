@@ -108,9 +108,9 @@ pwsh -NoProfile -File scripts/install-native-host.ps1 `
 
 ### 3. 配置 relay-export helper
 
-安装器会将 `relay.config.json` 中的 `helperPath` 设为 `scripts/tools/check_stage_gate_readiness.py`（producer 仓库的 helper）。**你必须将其修改为你自己的 helper 路径。**
+安装器默认将 `relay.config.json` 中的 `helperPath` 设为 `scripts/tools/relay_export_helper.py`，这是一个指向通用 helper 示例的仓库相对路径。请将该 helper 复制到目标仓库的相同路径，或在安装器中通过 `-HelperPath` 指定路径，也可以替换生成配置中的值为你自己的仓库 helper。
 
-如果你还没有 helper，本仓库包含一个最小实现 `scripts/tools/relay_export_helper.py`。修改生成的配置：
+如果你还没有 helper，请将本仓库的最小实现 `scripts/tools/relay_export_helper.py` 复制到目标仓库。生成的配置已经使用该路径：
 
 ```json
 {

@@ -110,9 +110,9 @@ This generates:
 
 ### 3. Configure the relay-export helper
 
-The installer sets `helperPath` in `relay.config.json` to `scripts/tools/check_stage_gate_readiness.py` (the producer repository's helper). **You must update this to point at your own helper.**
+The installer defaults `helperPath` in `relay.config.json` to `scripts/tools/relay_export_helper.py`, a repository-relative path for the generic helper example. Copy that helper into your target repository at this path, pass `-HelperPath` to the installer, or replace the value with your own repository helper.
 
-If you don't have a helper yet, this repository includes a minimal one at `scripts/tools/relay_export_helper.py`. Update the generated config:
+If you don't have a helper yet, copy the minimal implementation from this repository at `scripts/tools/relay_export_helper.py` into your target repository. The generated config already uses this path:
 
 ```json
 {

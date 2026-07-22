@@ -4,7 +4,9 @@
 
 ## 状态
 
-- 当前阶段：Stage 1（进行中）。
+- 当前阶段：Stage 2（进行中）。
+- Stage 1 acceptance：已由 Maintainer 批准进入 Stage 2；round-04 review-fix 在 reviewed head `09c0e063214646542666c5dda8057cd46b404d59` 返回 `PASS`，并确认 `RGEN-S1-005` / `RGEN-S1-006` 为 `ACCEPTED`。该记录不等同于 Ready、Issue acceptance 或 merge authorization。
+- 跨仓库适配跟踪：producer `David-JA/single-crystal-stress#44`，用于记录本仓库 generic helper/config 变化对 single-crystal 现有使用方式的影响，并在本 PR 收尾后完成 producer-side readback。
 - 关联 PR：本 spec 与全部 stage 改动进入同一个 PR（Stage 1 段 2 创建）。**Stage 3 完成且 README/contract 重新对齐前，PR 必须保持 Draft 状态，禁止 merge。**
 - 分支：`codex/relay-generality`，base = 分支创建时的 main tip（round-06 handoff 提交 `7629293`）。
 - transport 基线参照：PR#1 merge 点 `43c33e4`（producer 已验证可用的 completion detection + 单条 PR-comment 指令版本）。
