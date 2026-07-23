@@ -59,6 +59,7 @@
 - **同 fingerprint 重试幂等**：active 则加入现有等待；terminal 则立即返回存储结果。
 - **手动恢复**：仅 `recover_review(handoff_path, confirm_unsent=true)` 可在 terminal `MISMATCH` 后重 dispatch，一次性，须确认原消息未发送。
 - **`TURN_IDLE`**：表示浏览器 transport completion。PR mode 的 `assistant_output` 只应是非空短确认，formal verdict 必须从目标 PR comment readback；commit-only relay-only mode 的 `assistant_output` 是正式结论，且只能在 dispatch 后新增 assistant turn 已按稳定 DOM identity 完整 harvest、存在可在 reconnect 后复核的 turn-level completion evidence（例如该 turn 的 copy action）、内容保持稳定，并收到 native ACK 后 terminalize。仅观察到一段稳定文本、或曾经观察到 generating，都不是充分证据。`assistant_output_sha256` 仅用于完整性与重试审计，不替代 turn identity。
+- **commit-only transport gate 不允许 browser-readback 代替**：Stage 3 及其后续 relay-only review test 必须由 MCP result 返回完整 formal verdict（非空 `assistant_output`，并可核对首尾 anchor / SHA-256）。如果 web reviewer 页面已完成但 relay 未传回全文，repo agent 必须停止并请 Maintainer 人工转接；不得把 Chrome 页面 readback 当作该轮 transport acceptance。下一轮 handoff 必须将这次全文传输失败列为首要问题与验收项。
 - **单绑定状态机**：extension 全局只允许一个 manually armed ChatGPT tab 和一个 active job。已 armed 时再次 Arm 返回 `SESSION_ALREADY_ARMED`；active job 期间 Arm / Disarm 分别返回 `ACTIVE_JOB_ARM_FORBIDDEN` / `ACTIVE_JOB_DISARM_FORBIDDEN`，不能覆盖或清除 `activeJobId`。armed tab 关闭、导航、conversation identity 改变或 page binding drift 时，旧 binding 立即停止接收 lifecycle；若有 active job则报告 `SESSION_LOST`，随后进入 `DISARMED` 并要求 manual re-arm。native port reconnect 只能恢复同一 persisted binding，不得隐式切换 tab、conversation 或 job。content script 收到 lifecycle `{ok:false}` 时不得停止 observer，必须继续重试或进入 recovery。
 
 ## 文档同步

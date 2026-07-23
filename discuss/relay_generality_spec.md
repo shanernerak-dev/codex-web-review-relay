@@ -107,6 +107,7 @@ SESSION_LOST -> DISARMED
 - 必须覆盖同一 turn 多次轮询的增量合并，以及 turn 节点替换但 identity 不变时的继续收集。
 - 必须覆盖 lifecycle 返回 `{ok:false}` 的情况：observer 不得静默停止，job 不得被错误 terminalize。
 - acceptance evidence 应同时记录 `jobId`、目标 turn identity、完整输出首尾 anchor、`assistant_output_sha256` 和 native `TURN_IDLE` ACK；其中 hash 是校验与审计证据，不替代 turn identity 或 completion evidence。
+- relay-only review test 只有在 MCP result 的 `assistant_output` 含完整 formal verdict 时才通过 transport gate。页面上已生成全文但 relay 未交付时，repo agent 停止并由 Maintainer 人工转接；browser readback 只可用于诊断，不替代 acceptance evidence，且下一轮 handoff 必须优先记录并复验该全文传输 failure。
 
 ## 关键不变量（跨 stage 必须保持）
 

@@ -29,8 +29,8 @@ Stage 3 commit-only relay-only mode（仅限 Maintainer 明确授权的 acceptan
 6. **`git push`**。
 7. 本地校验：`python <helper> relay-export <handoff_path>` 确认 JSON 合法。
 8. 触发 `request_review(handoff_path=...)`。
-9. PR-comment mode：接收 `TURN_IDLE` 的短 `assistant_output` 作为 transport evidence；随后读取目标 PR comment，按当前 `reviewed_head`、`Review scope` 和预期 actor 核验并解析 formal verdict。commit-only relay-only mode：仅在本轮属于 Maintainer 明确授权的 Stage 3 acceptance-review pilot 时，按 `target_kind` / `target_id` 验证无 PR target，直接读取完整 `assistant_output`；缺失或无法确认时返回 `HUMAN DECISION REQUIRED`。Stage 3 acceptance 前不得把该 pilot 当作一般调用契约。
-10. PR-comment formal verdict 为 `PASS` → 结束，`REQUEST CHANGES` → 回步骤 1；commit-only relay-only pilot 的完整 `assistant_output` 按同一 verdict parser 处理；`HUMAN DECISION REQUIRED` / `COMMENT` → 停止并报告，**不擅自继续**。
+9. PR-comment mode：接收 `TURN_IDLE` 的短 `assistant_output` 作为 transport evidence；随后读取目标 PR comment，按当前 `reviewed_head`、`Review scope` 和预期 actor 核验并解析 formal verdict。commit-only relay-only mode：仅在本轮属于 Maintainer 明确授权的 Stage 3 acceptance-review pilot 时，按 `target_kind` / `target_id` 验证无 PR target，并要求 MCP result 直接返回完整 `assistant_output`（核对首尾 anchor 与 SHA-256）。Stage 3 acceptance 前不得把该 pilot 当作一般调用契约。
+10. PR-comment formal verdict 为 `PASS` → 结束，`REQUEST CHANGES` → 回步骤 1；commit-only relay-only pilot 的完整 `assistant_output` 按同一 verdict parser 处理。如果 web reviewer 页面已完成但 relay 未传回全文，立即停止并请 Maintainer 人工转接，不以 browser readback 替代 transport gate；下一轮 handoff 将该全文传输失败列为首要问题。`HUMAN DECISION REQUIRED` / `COMMENT` → 停止并报告，**不擅自继续**。
 
 ## web reviewer 契约
 
@@ -47,6 +47,7 @@ Stage 3 commit-only relay-only mode（仅限 Maintainer 明确授权的 acceptan
 | 同一 active job 未结束就 dispatch 下一轮 | `ACTIVE_JOB_EXISTS` | 等该 job 到 terminal（deadline 过期自动 TIMEOUT）或走 reconcile |
 | 已 Arm 或 active job 期间再次 Arm | 覆盖本地 `activeJobId`，造成 native / extension state split | 保持单一 armed tab；先完成当前 job，必要时 Disarm 后在目标 conversation 手动重新 Arm |
 | armed tab 导航后继续接收旧 monitor lifecycle | stale 页面可能与 `SESSION_LOST` 竞争提交结果 | 导航即原子失效本地 binding、报告 `SESSION_LOST` 并进入 `DISARMED` |
+| relay-only 页面已有完整 verdict，但 MCP result 无全文 | browser readback 掩盖 transport failure，无法证明插件完成交付 | 停止并请 Maintainer 转接；下一轮 handoff 首要记录该 failure，不将 browser readback 计为 transport acceptance |
 | review-fix handoff 不含 finding → fix 映射 | reviewer 无法核销上轮 findings → 全 UNVERIFIED | handoff 正文逐条列处置 |
 | 只改 README.md 不改 README.zh-CN.md | 中英漂移，产生新 finding | 同步改，术语对齐 |
 

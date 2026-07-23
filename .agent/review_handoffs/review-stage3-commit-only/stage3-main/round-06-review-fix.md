@@ -23,6 +23,12 @@ Stage 3 pilot authorization: Maintainer-authorized acceptance review; complete c
 - Turn identity and `assistant_output_sha256` remain capture/audit concerns and do not participate in tab/session binding.
 - Extension manifest version is bumped to `0.2.2` for this behavior change.
 
+## Required transport acceptance evidence
+
+- Round 04 and round 05 both produced complete review responses in the browser but ended as transport `TIMEOUT` with no persisted `assistant_output`. Browser readback documented those review findings, but it did not prove relay delivery.
+- This round must return the complete formal verdict through the MCP result `assistant_output`, with a successful `TURN_IDLE` lifecycle ACK and a persisted `assistant_output_sha256`. The caller must verify the output's first and last anchors and hash.
+- If the reviewer page completes but the relay does not return the full text, stop the workflow and request Maintainer transfer. Do not substitute Chrome/browser readback for this transport gate. Any subsequent handoff must list the full-verdict transfer failure as its first finding and acceptance target.
+
 ## Validation evidence
 
 - `node --experimental-strip-types --test --test-force-exit test/*.test.ts`: `101/101` passed.
