@@ -45,6 +45,8 @@ Stage 3 commit-only relay-only mode（仅限 Maintainer 明确授权的 acceptan
 | 改完不 push 就触发 review | reviewer 读 commit/handoff 404 → UNVERIFIED / HUMAN DECISION REQUIRED | 触发前 push reviewed head + handoff |
 | envelope 内嵌 handoff 正文或"读不到就靠摘要"兜底 | 违背"经 commit 取证"设计；reviewer 既无文件又无可靠摘要 | envelope 只给 Path + head，让 reviewer 读远端 |
 | 同一 active job 未结束就 dispatch 下一轮 | `ACTIVE_JOB_EXISTS` | 等该 job 到 terminal（deadline 过期自动 TIMEOUT）或走 reconcile |
+| 已 Arm 或 active job 期间再次 Arm | 覆盖本地 `activeJobId`，造成 native / extension state split | 保持单一 armed tab；先完成当前 job，必要时 Disarm 后在目标 conversation 手动重新 Arm |
+| armed tab 导航后继续接收旧 monitor lifecycle | stale 页面可能与 `SESSION_LOST` 竞争提交结果 | 导航即原子失效本地 binding、报告 `SESSION_LOST` 并进入 `DISARMED` |
 | review-fix handoff 不含 finding → fix 映射 | reviewer 无法核销上轮 findings → 全 UNVERIFIED | handoff 正文逐条列处置 |
 | 只改 README.md 不改 README.zh-CN.md | 中英漂移，产生新 finding | 同步改，术语对齐 |
 

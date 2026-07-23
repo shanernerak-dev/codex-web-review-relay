@@ -28,8 +28,9 @@
     let candidateOutputSince = 0;
     let nextIdleAttemptAt = 0;
     let idleSendPending = false;
+    let userNode = state.user ?? null;
     let assistantNode = state.assistant ?? null;
-    let assistantNodes = state.assistant ? [state.assistant] : [];
+    let assistantNodes = Array.isArray(state.assistants) ? state.assistants : (state.assistant ? [state.assistant] : []);
     let lastMutationAt = Date.now();
     const finish = () => { if (settled) return; settled = true; observer.disconnect(); clearInterval(timer); clearInterval(pollTimer); active = null; };
     const inspect = async () => {
@@ -39,10 +40,13 @@
       try {
         do {
           inspectPending = false;
-          if (!userAcked && adapter.newTurn(document, state.baseline, "user", message.envelope)) { await sendLifecycle("USER_TURN_ACKED", job); userAcked = true; }
-          const observedAssistants = userAcked && typeof adapter.newTurns === "function"
-            ? adapter.newTurns(document, state.baseline, "assistant")
-            : [];
+          if (!userAcked) {
+            const observedUser = adapter.newTurn(document, state.baseline, "user", message.envelope);
+            if (observedUser) { userNode = observedUser; await sendLifecycle("USER_TURN_ACKED", job); userAcked = true; }
+          }
+          const observedAssistants = userAcked && userNode && typeof adapter.assistantTurnsAfter === "function"
+            ? adapter.assistantTurnsAfter(document, userNode)
+            : (userAcked && typeof adapter.newTurns === "function" ? adapter.newTurns(document, state.baseline, "assistant") : []);
           const observedAssistant = observedAssistants.length > 0
             ? observedAssistants[observedAssistants.length - 1]
             : (userAcked ? adapter.newTurn(document, state.baseline, "assistant") : null);
@@ -113,8 +117,8 @@
     if (observed.state === "user-present") {
       const job = {jobId: message.jobId, deadline: Date.parse(message.deadline)};
       await sendLifecycle("USER_TURN_ACKED", job);
-      if (observed.assistant) await sendLifecycle("ASSISTANT_STARTED", job);
-      monitor(message, observed, true, Boolean(observed.assistant));
+      if (observed.assistants?.length > 0 || observed.assistant) await sendLifecycle("ASSISTANT_STARTED", job);
+      monitor(message, observed, true, Boolean(observed.assistants?.length > 0 || observed.assistant));
       return;
     }
     if (observed.state === "draft-unsent" && message.allowUnsentSend === true) {
@@ -126,7 +130,7 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     try {
-      if (message.kind === "GET_PAGE_STATE") { adapter.pageSupported(location); respond({ok: true, adapterReady: true}); }
+      if (message.kind === "GET_PAGE_STATE") { adapter.pageSupported(location); respond({ok: true, adapterReady: true, conversationIdentity: `${location.origin}${location.pathname}`}); }
       else if (message.kind === "DISPATCH_TRIGGER") { startDispatch(message).then(() => respond({ok: true}), (error) => respond({ok: false, errorCode: error.message.split(":", 1)[0]})); return true; }
       else if (message.kind === "RECONCILE_TRIGGER") { startReconcile(message).then(() => respond({ok: true}), (error) => respond({ok: false, errorCode: error.message.split(":", 1)[0]})); return true; }
       else respond({ok: false, errorCode: "CONTENT_MESSAGE_UNSUPPORTED"});

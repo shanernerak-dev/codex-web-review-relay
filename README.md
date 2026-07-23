@@ -154,7 +154,9 @@ The extension ID is fixed: `kkdijpckhlminpolkllmmkldlljakfem`.
 2. Click the extension icon and click **Arm**.
 3. The popup confirms the session is armed and shows connection status.
 
-During a review, the extension tracks the assistant response by the ChatGPT turn identity and incrementally harvests updates, rather than treating whichever assistant bubble is currently newest as the result. Do not click **Disarm** while a review is active; the popup returns `ACTIVE_JOB_DISARM_FORBIDDEN` until the job reaches a terminal or recovery state. A `TURN_IDLE` result is sent only after the target turn is complete and the native host acknowledges receipt.
+The extension permits one manually armed ChatGPT tab and one active review job. A second **Arm** returns `SESSION_ALREADY_ARMED`; while a job is active, **Arm** and **Disarm** return `ACTIVE_JOB_ARM_FORBIDDEN` and `ACTIVE_JOB_DISARM_FORBIDDEN`. If the armed tab closes, navigates, changes conversation, or loses its page binding, the current job reports `SESSION_LOST`, the extension disarms, and you must manually Arm the intended conversation again.
+
+During a review, the extension tracks the assistant response by the ChatGPT turn identity and incrementally harvests every ordered assistant turn after the target user turn and before the next user turn. It does not treat whichever assistant bubble is currently newest as the result. A `TURN_IDLE` result is sent only after the target turn set is complete and the native host acknowledges receipt.
 
 ### 6. Connect your MCP client
 
@@ -410,7 +412,7 @@ If you want similar structure, see:
 ## Current Limitations (MVP)
 
 - Single repository per native host instance (config is static).
-- Single active session and single active job at a time.
+- One manually armed ChatGPT tab and one active job at a time; no automatic tab or conversation switching.
 - Windows-only installer (Linux/macOS needs manual Native Messaging manifest registration).
 - ChatGPT web only (no API, no other chat platforms).
 - Full `npm test` has a known open-handle issue with Node's test runner + Native Messaging stdin; targeted suites pass cleanly.

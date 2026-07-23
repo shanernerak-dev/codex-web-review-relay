@@ -127,9 +127,19 @@ test("DOM adapter reads back the current composer after Lexical replaces the nod
 });
 
 test("DOM adapter matches only new exact user turn then assistant idle", () => {
-  const oldUser = node({role: "user", innerText: "old"});
-  const newUser = node({role: "user", innerText: "envelope"});
-  const assistant = node({role: "assistant", innerText: "working"});
+  const stable = (role: string, id: string, text: string) => node({
+    role,
+    innerText: text,
+    getAttribute(name) {
+      if (name === "data-message-id") return id;
+      if (name === "data-message-author-role") return role;
+      return null;
+    },
+    closest(selector) { return selector === "[data-message-id]" ? this : null; },
+  });
+  const oldUser = stable("user", "old-user", "old");
+  const newUser = stable("user", "new-user", "envelope");
+  const assistant = stable("assistant", "assistant", "working");
   const send = node();
   const input = node({value: ""});
   const map = new Map<string, NodeLike[]>([["#prompt-textarea", [input]], ["[contenteditable='true'][data-lexical-editor='true']", []], ["[data-message-author-role]", [oldUser]], ["[data-testid='send-button']", [send]], ["[data-testid='stop-button']", []]]);
@@ -281,6 +291,89 @@ test("DOM adapter reconciles existing user turn or one exact unsent draft", asyn
   assert.equal(send.clicked, 1);
   input.value = "different";
   assert.equal(adapter.reconcile(document, "envelope").state, "missing");
+});
+
+test("DOM adapter reconciles every ordered assistant turn before the next user", () => {
+  const stable = (role: string, id: string, text: string) => node({
+    role,
+    innerText: text,
+    getAttribute(name) {
+      if (name === "data-message-id") return id;
+      if (name === "data-message-author-role") return role;
+      return null;
+    },
+    closest(selector) { return selector === "[data-message-id]" ? this : null; },
+  });
+  const user = stable("user", "user-target", "envelope");
+  const first = stable("assistant", "assistant-a", "analysis");
+  const second = stable("assistant", "assistant-b", "formal verdict");
+  const nextUser = stable("user", "user-next", "unrelated follow-up");
+  const contamination = stable("assistant", "assistant-c", "must not be captured");
+  const map = new Map<string, NodeLike[]>([
+    ["[data-message-author-role]", [user, first, second, nextUser, contamination]],
+    ["#prompt-textarea", [node({value: ""})]],
+    ["[contenteditable='true'][data-lexical-editor='true']", []],
+  ]);
+  const document = fakeDocument(map);
+  const observed = adapter.reconcile(document, "envelope");
+  assert.deepEqual(observed.assistants, [first, second]);
+  assert.equal(observed.assistant, second);
+  assert.equal(adapter.rawTurnText(document, observed.assistants), "analysis\n\nformal verdict");
+  assert.equal(observed.baseline.turnIdentities.has("message-id:assistant-a"), true);
+});
+
+test("DOM adapter keeps a stable reconcile anchor across DOM replacement", () => {
+  const stable = (role: string, id: string, text: string) => node({
+    role,
+    innerText: text,
+    getAttribute(name) {
+      if (name === "data-message-id") return id;
+      if (name === "data-message-author-role") return role;
+      return null;
+    },
+    closest(selector) { return selector === "[data-message-id]" ? this : null; },
+  });
+  const user = stable("user", "user-target", "envelope");
+  const partial = stable("assistant", "assistant-target", "partial");
+  const map = new Map<string, NodeLike[]>([
+    ["[data-message-author-role]", [user, partial]],
+    ["#prompt-textarea", [node({value: ""})]],
+    ["[contenteditable='true'][data-lexical-editor='true']", []],
+  ]);
+  const document = fakeDocument(map);
+  const observed = adapter.reconcile(document, "envelope");
+  const rerenderedUser = stable("user", "user-target", "envelope");
+  const complete = stable("assistant", "assistant-target", "complete");
+  map.set("[data-message-author-role]", [rerenderedUser, complete]);
+  assert.deepEqual(adapter.newTurns(document, observed.baseline, "assistant"), []);
+  assert.deepEqual(adapter.assistantTurnsAfter(document, observed.user), [complete]);
+  assert.equal(adapter.rawTurnText(document, observed.assistants), "complete");
+});
+
+test("DOM adapter fails closed when an unstable generic turn is replaced", () => {
+  const genericTurn = () => node({getAttribute(name) { return name === "data-testid" ? "conversation-turn" : null; }});
+  const bubble = (turn: NodeLike, text: string) => node({
+    role: "assistant",
+    innerText: text,
+    closest(selector) { return selector === "[data-testid='conversation-turn']" ? turn : null; },
+  });
+  const first = bubble(genericTurn(), "old assistant");
+  const map = new Map<string, NodeLike[]>([["[data-message-author-role]", [first]]]);
+  const baseline = adapter.snapshotTurns(fakeDocument(map));
+  map.set("[data-message-author-role]", [bubble(genericTurn(), "rerendered assistant")]);
+  assert.throws(() => adapter.newTurns(fakeDocument(map), baseline, "assistant"), /TURN_IDENTITY_UNSTABLE/);
+  assert.throws(() => adapter.newTurn(fakeDocument(map), baseline, "assistant"), /TURN_IDENTITY_UNSTABLE/);
+});
+
+test("DOM adapter does not merge turns through an arbitrary shared ancestor id", () => {
+  const shared = node({getAttribute(name) { return name === "id" ? "conversation-root" : null; }});
+  const bubble = (text: string) => node({
+    role: "assistant",
+    innerText: text,
+    closest(selector) { return selector === "[id]" ? shared : null; },
+  });
+  const map = new Map<string, NodeLike[]>([["[data-message-author-role]", [bubble("first"), bubble("second")]]]);
+  assert.throws(() => adapter.newTurn(fakeDocument(map), new Set(), "assistant"), /TURN_IDENTITY_AMBIGUOUS/);
 });
 
 test("DOM adapter ignores hidden duplicate controls but rejects two visible controls", async () => {

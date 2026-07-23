@@ -18,7 +18,7 @@ function harness(ackDelayMs = 0) {
   const calls = {dispatch: 0, resumeDraft: 0};
   let user = false;
   let assistant = false;
-  let assistantOutput = "final review output";
+  let assistantOutputs = ["final review output"];
   let assistantComplete = false;
   let codeCopy = false;
   let generating = false;
@@ -35,11 +35,12 @@ function harness(ackDelayMs = 0) {
     dispatch: () => { calls.dispatch += 1; return {baseline: new Set()}; },
     resumeDraft: () => { calls.resumeDraft += 1; return {baseline: new Set()}; },
     reconcile: () => user
-      ? {state: "user-present", assistant: assistant ? {innerText: assistantOutput} : null, baseline: new Set()}
+      ? {state: "user-present", user: {}, assistant: assistant ? {innerText: assistantOutputs.at(-1)} : null, assistants: assistant ? assistantOutputs.map((innerText) => ({innerText})) : [], baseline: new Set()}
       : {state: "missing", baseline: new Set()},
-    newTurn: (_document: unknown, _baseline: Set<unknown>, role: string) => role === "user" ? (user ? {} : null) : (assistant ? {innerText: "final review output"} : null),
+    newTurn: (_document: unknown, _baseline: Set<unknown>, role: string) => role === "user" ? (user ? {} : null) : (assistant ? {innerText: assistantOutputs.at(-1)} : null),
+    assistantTurnsAfter: () => assistant ? assistantOutputs.map((innerText) => ({innerText})) : [],
     rawText: (node: any) => node?.innerText ?? "",
-    rawTurnText: (_document: unknown, _node: any) => assistantOutput,
+    rawTurnText: (_document: unknown, _node: any) => assistantOutputs.join("\n\n"),
     isAssistantComplete: () => assistantComplete && !codeCopy,
     isGenerating: () => generating,
     isResponseIdle: () => !generating,
@@ -104,7 +105,8 @@ function harness(ackDelayMs = 0) {
     mutate() { observerCallback?.(); },
     setUser(value: boolean) { user = value; },
     setAssistant(value: boolean) { assistant = value; },
-    setAssistantOutput(value: string) { assistantOutput = value; },
+    setAssistantOutput(value: string) { assistantOutputs = [value]; },
+    setAssistantOutputs(values: string[]) { assistantOutputs = [...values]; },
     setAssistantComplete(value: boolean) { assistantComplete = value; },
     setAssistantCodeCopy(value: boolean) { codeCopy = value; },
     setGenerating(value: boolean) { generating = value; },
@@ -214,6 +216,17 @@ test("relay-only reconcile completes an already-complete assistant reply", async
   assert.equal((await h.reconcile(9_000)).ok, true);
   await waitFor(() => h.events.includes("TURN_IDLE"), 7_000);
   assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "complete reply recovered after reconnect");
+});
+
+test("relay-only reconcile preserves every ordered assistant turn", async () => {
+  const h = harness();
+  h.setUser(true);
+  h.setAssistant(true);
+  h.setAssistantComplete(true);
+  h.setAssistantOutputs(["analysis segment", "formal verdict segment"]);
+  assert.equal((await h.reconcile(9_000)).ok, true);
+  await waitFor(() => h.events.includes("TURN_IDLE"), 7_000);
+  assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "analysis segment\n\nformal verdict segment");
 });
 
 test("relay-only reconcile does not complete a partial assistant bubble without completion evidence", async () => {

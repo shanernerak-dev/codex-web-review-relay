@@ -49,6 +49,7 @@
   function snapshotTurns(document) {
     const snapshot = new Set(Array.from(document.querySelectorAll(TURN_SELECTOR)));
     snapshot.turnIdentities = new Set(Array.from(snapshot).map(stableTurnIdentity).filter((identity) => typeof identity === "string"));
+    snapshot.unstableTurnCount = Array.from(snapshot).filter((node) => typeof stableTurnIdentity(node) !== "string").length;
     return snapshot;
   }
   function turns(document) { return Array.from(document.querySelectorAll(TURN_SELECTOR)); }
@@ -58,7 +59,6 @@
       node?.closest?.("[data-message-id]") ?? null,
       node?.closest?.("[data-testid^='conversation-turn-']") ?? null,
       node?.closest?.("[data-testid='conversation-turn']") ?? null,
-      node?.closest?.("[id]") ?? null,
     ].filter(Boolean);
     for (const container of containers) {
       const turnId = container.getAttribute?.("data-turn-id");
@@ -133,14 +133,43 @@
       if (isBaselineTurn(node, baseline) || node.getAttribute("data-message-author-role") !== role) continue;
       if (exactText !== undefined && normalizedText(node) !== exactText.trim()) continue;
       const identity = stableTurnIdentity(node);
+      if (typeof identity !== "string" && baseline?.unstableTurnCount > 0) throw new Error("TURN_IDENTITY_UNSTABLE");
       const record = identity === null ? null : records.find((candidate) => candidate.identity === identity);
       if (record) record.nodes.push(node);
       else records.push({identity, nodes: [node]});
     }
     return records.map((record) => record.nodes[record.nodes.length - 1]);
   }
+  function findAnchoredTurnIndex(all, anchor) {
+    const direct = all.indexOf(anchor);
+    if (direct >= 0) return direct;
+    const identity = stableTurnIdentity(anchor);
+    if (typeof identity !== "string") throw new Error("TURN_IDENTITY_UNSTABLE");
+    const matches = all.map(stableTurnIdentity).reduce((indexes, candidate, index) => candidate === identity ? [...indexes, index] : indexes, []);
+    if (matches.length !== 1) throw new Error("TURN_ANCHOR_AMBIGUOUS");
+    return matches[0];
+  }
+  function groupedAssistantTurns(nodes) {
+    const records = [];
+    for (const node of nodes) {
+      if (node.getAttribute("data-message-author-role") !== "assistant") continue;
+      const identity = stableTurnIdentity(node);
+      const record = identity === null ? null : records.find((candidate) => candidate.identity === identity);
+      if (record) record.nodes.push(node);
+      else records.push({identity, nodes: [node]});
+    }
+    return records.map((record) => record.nodes[record.nodes.length - 1]);
+  }
+  function assistantTurnsAfter(document, userAnchor) {
+    const all = turns(document);
+    const index = findAnchoredTurnIndex(all, userAnchor);
+    const tail = all.slice(index + 1);
+    const nextUser = tail.findIndex((node) => node.getAttribute("data-message-author-role") === "user");
+    return groupedAssistantTurns(nextUser >= 0 ? tail.slice(0, nextUser) : tail);
+  }
   function newTurn(document, baseline, role, exactText) {
     const matches = Array.from(document.querySelectorAll(TURN_SELECTOR)).filter((node) => !isBaselineTurn(node, baseline) && node.getAttribute("data-message-author-role") === role && (exactText === undefined || normalizedText(node) === exactText.trim()));
+    if (baseline?.unstableTurnCount > 0 && matches.some((node) => typeof stableTurnIdentity(node) !== "string")) throw new Error("TURN_IDENTITY_UNSTABLE");
     if (role === "assistant") return oneAssistantTurn(matches);
     if (matches.length > 1) throw new Error(`TURN_IDENTITY_AMBIGUOUS:${role}`);
     return matches[0] ?? null;
@@ -177,13 +206,12 @@
     const users = all.filter((node) => node.getAttribute("data-message-author-role") === "user" && normalizedText(node) === envelope.trim());
     if (users.length > 1) throw new Error("RECONCILE_USER_TURN_AMBIGUOUS");
     if (users.length === 1) {
-      const index = all.indexOf(users[0]);
-      const assistant = all.slice(index + 1).find((node) => node.getAttribute("data-message-author-role") === "assistant") ?? null;
-      return {state: "user-present", user: users[0], assistant, baseline: new Set(all)};
+      const assistants = assistantTurnsAfter(document, users[0]);
+      return {state: "user-present", user: users[0], assistant: assistants.at(-1) ?? null, assistants, baseline: snapshotTurns(document)};
     }
     let draftExact = false;
     try { draftExact = normalizedText(composer(document)) === envelope.trim(); } catch {}
-    return {state: draftExact ? "draft-unsent" : "missing", baseline: new Set(all)};
+    return {state: draftExact ? "draft-unsent" : "missing", baseline: snapshotTurns(document)};
   }
   async function resumeDraft(document, envelope) {
     const input = composer(document);
@@ -198,5 +226,5 @@
     try { composer(document); return true; }
     catch { return false; }
   }
-  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, isAssistantComplete, writeComposer, snapshotTurns, newTurn, newTurns, turns, dispatch, reconcile, resumeDraft, isGenerating, isResponseIdle, isIdle};
+  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, isAssistantComplete, writeComposer, snapshotTurns, newTurn, newTurns, assistantTurnsAfter, turns, dispatch, reconcile, resumeDraft, isGenerating, isResponseIdle, isIdle};
 })(globalThis);

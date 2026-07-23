@@ -152,7 +152,9 @@ Native host 以 `python <helperPath> relay-export <handoff_path>` 形式调用 h
 2. 点击扩展图标，点击 **Arm**。
 3. 弹窗确认会话已 Arm，并显示连接状态。
 
-评审期间，扩展会按 ChatGPT turn identity 增量提取目标 assistant 回复，而不是把当前页面上“最新的 assistant bubble”直接当作结果。评审 active 时不要点击 **Disarm**；在 job 进入 terminal 或 recovery 前，弹窗会返回 `ACTIVE_JOB_DISARM_FORBIDDEN`。只有目标 turn 完成且 native host 确认收到后，才会发送 `TURN_IDLE`。
+扩展同时只允许一个手动 Arm 的 ChatGPT 标签页和一个 active review job。第二次点击 **Arm** 返回 `SESSION_ALREADY_ARMED`；job active 时点击 **Arm** / **Disarm** 分别返回 `ACTIVE_JOB_ARM_FORBIDDEN` / `ACTIVE_JOB_DISARM_FORBIDDEN`。如果 armed 标签页关闭、导航、切换 conversation 或丢失 page binding，当前 job 报告 `SESSION_LOST`，extension 随即 Disarm；你必须在目标对话中手动重新 Arm。
+
+评审期间，扩展会按 ChatGPT turn identity 增量提取目标 user turn 之后、下一个 user turn 之前的全部有序 assistant turns，而不是把当前页面上“最新的 assistant bubble”直接当作结果。只有目标 turn 集合完整且 native host 确认收到后，才会发送 `TURN_IDLE`。
 
 ### 6. 连接你的 MCP 客户端
 
@@ -408,7 +410,7 @@ Review scope: <评审者应关注的内容>
 ## 当前限制（MVP）
 
 - 每个 native host 实例只服务单个仓库（配置是静态的）。
-- 同一时间只有一个活跃 session 和一个活跃 job。
+- 同一时间只有一个手动 Arm 的 ChatGPT 标签页和一个 active job；不会自动切换标签页或 conversation。
 - 仅 Windows 安装器（Linux/macOS 需手动注册 Native Messaging manifest）。
 - 仅 ChatGPT Web 端（无 API、无其他聊天平台）。
 - 完整 `npm test` 存在已知的 Node test runner + Native Messaging stdin open-handle 问题；targeted suite 正常通过。
