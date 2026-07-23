@@ -16,12 +16,13 @@ function event() {
   };
 }
 
-function port() {
+function port(diagnosticResponse: (message: any) => any = (message) => ({
+  schemaVersion: {major: 1, minor: 3}, type: "DIAGNOSTIC_ACK", responseToRequestId: message.requestId,
+  persisted: true, disposition: "appended",
+})) {
   return {messages: [] as any[], onMessage: event(), onDisconnect: event(), postMessage(message: any) {
     this.messages.push(message);
-    if (message.type === "DIAGNOSTIC_EVENT") queueMicrotask(() => void this.onMessage.emit({
-      schemaVersion: {major: 1, minor: 2}, type: "DIAGNOSTIC_ACK", responseToRequestId: message.requestId,
-    }));
+    if (message.type === "DIAGNOSTIC_EVENT") queueMicrotask(() => void this.onMessage.emit(diagnosticResponse(message)));
   }, disconnect() { void this.onDisconnect.emit(); }};
 }
 
@@ -39,13 +40,17 @@ function harness() {
   const tabUpdated = event();
   const ports: ReturnType<typeof port>[] = [];
   const storage = new Map<string, any>();
+  let diagnosticResponse = (message: any) => ({
+    schemaVersion: {major: 1, minor: 3}, type: "DIAGNOSTIC_ACK", responseToRequestId: message.requestId,
+    persisted: true, disposition: "appended",
+  });
   let conversationIdentity = "https://chatgpt.com/c/conversation-a";
   const documentId = "document-a";
   const chrome = {
     runtime: {
       lastError: null,
       getManifest: () => ({version: "0.2.1"}),
-      connectNative: () => { const created = port(); ports.push(created); return created; },
+      connectNative: () => { const created = port((message) => diagnosticResponse(message)); ports.push(created); return created; },
       onMessage: runtimeMessages,
     },
     storage: {local: {
@@ -93,7 +98,13 @@ function harness() {
     void target.onMessage.emit({schemaVersion: {major: 1, minor: 0}, type, responseToRequestId: request.requestId, ...extra});
   }
 
-  return {ports, runtime, tabUpdated, setConversation(value: string) { conversationIdentity = value; }, respondTo};
+  return {
+    ports, runtime, tabUpdated,
+    setConversation(value: string) { conversationIdentity = value; },
+    setDiagnosticResponse(value: (message: any) => any) { diagnosticResponse = value; },
+    diagnosticQueue() { return storage.get("reviewRelayDiagnosticsV1") ?? []; },
+    respondTo,
+  };
 }
 
 test("extension waits for lifecycle ACK, acknowledges dispatch receipt and recovers only the armed binding", async () => {
@@ -104,7 +115,7 @@ test("extension waits for lifecycle ACK, acknowledges dispatch receipt and recov
   const armRequest = firstPort.messages.find((message) => message.type === "ARM_SESSION");
   assert.equal(Array.from(armRequest.capabilities).join(","), "relay-only-v1,diagnostics-v1");
   assert.equal(armRequest.schemaVersion.major, 1);
-  assert.equal(armRequest.schemaVersion.minor, 2);
+  assert.equal(armRequest.schemaVersion.minor, 3);
   h.respondTo(firstPort, armRequest, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
   assert.equal((await armResult).ok, true);
   const duplicateArm = await h.runtime({kind: "POPUP_ARM"});
@@ -253,4 +264,47 @@ test("same-tab navigation atomically rejects the old monitor and requires manual
   const disarm = replacementPort.messages.find((message) => message.type === "DISARM_SESSION" && message.sessionId === replacementArm.sessionId);
   h.respondTo(replacementPort, disarm, "SESSION_DISARMED");
   await disarmResult;
+});
+
+test("terminal reconcile mismatch releases the background active job", async () => {
+  const h = harness();
+  const armResult = h.runtime({kind: "POPUP_ARM"});
+  await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
+  const nativePort = h.ports[0];
+  const armRequest = nativePort.messages.find((message) => message.type === "ARM_SESSION");
+  h.respondTo(nativePort, armRequest, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
+  await armResult;
+  await nativePort.onMessage.emit({
+    schemaVersion: {major: 1, minor: 3}, type: "RECONCILE_TRIGGER", requestId: "reconcile-missing",
+    sessionId: armRequest.sessionId, jobId: "job-missing", envelope: "Path: x",
+    ownershipGeneration: 2, deadline: new Date(Date.now() + 10_000).toISOString(),
+  });
+  const lifecycle = h.runtime({kind: "LIFECYCLE", type: "RECONCILE_MISMATCH", jobId: "job-missing"});
+  await waitFor(() => nativePort.messages.some((message) => message.type === "RECONCILE_MISMATCH"));
+  const mismatch = nativePort.messages.find((message) => message.type === "RECONCILE_MISMATCH");
+  assert.equal(mismatch.ownershipGeneration, 2);
+  h.respondTo(nativePort, mismatch, "EVENT_ACK", {jobId: "job-missing", phase: "MISMATCH"});
+  assert.equal((await lifecycle).ok, true);
+  assert.equal((await h.runtime({kind: "POPUP_STATUS"})).state.activeJobId, null);
+});
+
+test("diagnostic queue is retained for a correlated ACK without persisted evidence", async () => {
+  const h = harness();
+  const armResult = h.runtime({kind: "POPUP_ARM"});
+  await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
+  const nativePort = h.ports[0];
+  const armRequest = nativePort.messages.find((message) => message.type === "ARM_SESSION");
+  h.respondTo(nativePort, armRequest, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
+  await armResult;
+  h.setDiagnosticResponse((message) => ({
+    schemaVersion: {major: 1, minor: 3}, type: "DIAGNOSTIC_ACK", responseToRequestId: message.requestId,
+    disposition: "appended",
+  }));
+  await nativePort.onMessage.emit({
+    schemaVersion: {major: 1, minor: 3}, type: "DISPATCH_TRIGGER", requestId: "dispatch-diag",
+    sessionId: armRequest.sessionId, jobId: "job-diag", envelope: "Path: x",
+    ownershipGeneration: 1, deadline: new Date(Date.now() + 10_000).toISOString(),
+  });
+  await waitFor(() => h.diagnosticQueue().length > 0);
+  assert.ok(h.diagnosticQueue().length > 0);
 });

@@ -538,3 +538,98 @@ test("turn tracker updates a stable message after DOM replacement instead of dup
   assert.equal(adapter.turnRecordText(record, true), "complete formal verdict");
   assert.equal(record.fragments.size, 1);
 });
+
+test("turn tracker groups fragments by one generic conversation-turn container", () => {
+  const container = node({
+    getAttribute(name) { return name === "data-testid" ? "conversation-turn" : null; },
+    closest(selector) { return selector === "[data-testid='conversation-turn']" ? this : null; },
+  });
+  const fragment = (messageId: string, text: string) => node({
+    role: "assistant", innerText: text,
+    getAttribute(name) {
+      if (name === "data-message-author-role") return "assistant";
+      if (name === "data-message-id") return messageId;
+      return null;
+    },
+    closest(selector) { return selector === "[data-testid='conversation-turn']" ? container : null; },
+  });
+  const selector = "[data-testid^='conversation-turn-'], [data-testid='conversation-turn']";
+  const document = fakeDocument(new Map([
+    ["[data-message-author-role]", [fragment("a", "analysis"), fragment("b", "verdict")]],
+    [selector, [container]],
+  ]));
+  const tracker = adapter.createTurnTracker(document, false);
+  assert.equal(tracker.records.size, 1);
+  assert.equal(adapter.turnRecordText(tracker.records.get(container), true), "analysis\n\nverdict");
+});
+
+test("turn tracker preserves skeleton order while the target user is virtualized", () => {
+  const shell = (id: string) => node({
+    getAttribute(name) {
+      if (name === "data-turn-id") return id;
+      if (name === "data-testid") return `conversation-turn-${id}`;
+      return null;
+    },
+    closest(selector) { return selector === "[data-turn-id]" || selector === "[data-testid^='conversation-turn-']" ? this : null; },
+  });
+  const userShell = shell("user");
+  const assistantShell = shell("assistant");
+  const roleNode = (container: NodeLike, role: string, messageId: string, text: string) => node({
+    role, innerText: text,
+    getAttribute(name) {
+      if (name === "data-message-author-role") return role;
+      if (name === "data-message-id") return messageId;
+      return null;
+    },
+    closest(selector) { return selector === "[data-turn-id]" ? container : null; },
+  });
+  const user = roleNode(userShell, "user", "user-message", "envelope");
+  const assistant = roleNode(assistantShell, "assistant", "assistant-message", "verdict");
+  const selector = "[data-testid^='conversation-turn-'], [data-testid='conversation-turn']";
+  const map = new Map<string, NodeLike[]>([
+    [selector, [userShell, assistantShell]],
+    ["[data-message-author-role]", [user, assistant]],
+  ]);
+  const document = fakeDocument(map);
+  const tracker = adapter.createTurnTracker(document, false);
+  const target = adapter.findTrackedUserTurn(document, tracker, "envelope", true);
+  map.set("[data-message-author-role]", [assistant]);
+  assert.deepEqual(adapter.trackedAssistantTurnsAfter(document, tracker, target).map((record: any) => adapter.turnRecordText(record, true)), ["verdict"]);
+  assert.deepEqual(tracker.order, ["turn-id:user", "turn-id:assistant"]);
+});
+
+test("turn tracker waits for strict content selectors instead of reading action labels", () => {
+  const container = node({getAttribute(name) { return name === "data-turn-id" ? "strict-user" : null; }});
+  const roleNode = node({
+    role: "user", innerText: "envelope\nEdit message",
+    getAttribute(name) {
+      if (name === "data-message-author-role") return "user";
+      if (name === "data-message-id") return "strict-message";
+      return null;
+    },
+    closest(selector) { return selector === "[data-turn-id]" ? container : null; },
+    querySelector() { return null; },
+  });
+  const document = fakeDocument(new Map([["[data-message-author-role]", [roleNode]]]));
+  const tracker = adapter.createTurnTracker(document, false);
+  assert.equal(adapter.findTrackedUserTurn(document, tracker, "envelope", true), null);
+  assert.equal(adapter.turnRecordText(tracker.records.get("turn-id:strict-user"), true), "");
+});
+
+test("turn tracker extracts assistant markdown without action or code-copy labels", () => {
+  const container = node({getAttribute(name) { return name === "data-turn-id" ? "strict-assistant" : null; }});
+  const markdown = node({innerText: "Verdict: PASS\n\n```js\nconst value = 1;\n```"});
+  const roleNode = node({
+    role: "assistant", innerText: "Verdict: PASS\nCopy code\nCopy\nShare",
+    getAttribute(name) {
+      if (name === "data-message-author-role") return "assistant";
+      if (name === "data-message-id") return "strict-assistant-message";
+      return null;
+    },
+    closest(selector) { return selector === "[data-turn-id]" ? container : null; },
+    querySelector(selector) { return selector === ".markdown.prose" ? markdown : null; },
+  });
+  const document = fakeDocument(new Map([["[data-message-author-role]", [roleNode]]]));
+  const tracker = adapter.createTurnTracker(document, false);
+  assert.equal(adapter.turnRecordText(tracker.records.get("turn-id:strict-assistant"), true), "Verdict: PASS\n\n```js\nconst value = 1;\n```");
+});

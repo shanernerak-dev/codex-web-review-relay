@@ -14,7 +14,7 @@
   }
   async function sendLifecycle(type, job, errorCode = null, assistantOutput = null) {
     diagnostic("info", "lifecycle_requested", job, {message_type: type, ...(errorCode ? {error_code: errorCode} : {}), ...(assistantOutput !== null ? {length: assistantOutput.length} : {})});
-    const response = await chrome.runtime.sendMessage({kind: "LIFECYCLE", type, jobId: job.jobId, errorCode, bindingGeneration: job.bindingGeneration, documentId: DOCUMENT_ID, ...(assistantOutput !== null ? {assistantOutput} : {})});
+    const response = await chrome.runtime.sendMessage({kind: "LIFECYCLE", type, jobId: job.jobId, errorCode, bindingGeneration: job.bindingGeneration, documentId: DOCUMENT_ID, ownershipGeneration: job.ownershipGeneration, ...(assistantOutput !== null ? {assistantOutput} : {})});
     if (response?.ok !== true) {
       diagnostic("error", "lifecycle_rejected", job, {message_type: type, error_code: response?.errorCode ?? response?.error ?? "LIFECYCLE_ACK_REJECTED"});
       throw new Error(response?.errorCode ?? response?.error ?? "LIFECYCLE_ACK_REJECTED");
@@ -32,9 +32,13 @@
     }
   }
   function requireLiveDeadline(message) { if (!Number.isFinite(Date.parse(message.deadline)) || Date.now() >= Date.parse(message.deadline)) throw new Error("MESSAGE_DEADLINE_EXPIRED"); }
+  async function sha256Hex(value) {
+    const bytes = new TextEncoder().encode(String(value));
+    return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
 
   function monitor(message, state, userAcked = false, assistantStarted = false) {
-    const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration};
+    const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration};
     diagnostic("info", "monitor_started", job, {state: userAcked ? "reconcile" : "dispatch"});
     const relayOnly = message.reviewMode === "relay-only";
     const quietIdleMs = relayOnly ? RELAY_ONLY_QUIET_IDLE_MS : PR_QUIET_IDLE_MS;
@@ -77,7 +81,8 @@
               userAcked = true;
             }
           }
-          const observedAssistantRecords = userAcked && tracker && userRecord && typeof adapter.trackedAssistantTurnsAfter === "function"
+          const trackedPath = Boolean(userAcked && tracker && userRecord && typeof adapter.trackedAssistantTurnsAfter === "function");
+          const observedAssistantRecords = trackedPath
             ? adapter.trackedAssistantTurnsAfter(document, tracker, userRecord)
             : [];
           const observedAssistants = observedAssistantRecords.length > 0
@@ -85,8 +90,9 @@
             : (userAcked && userNode && typeof adapter.assistantTurnsAfter === "function"
               ? adapter.assistantTurnsAfter(document, userNode)
               : (userAcked && typeof adapter.newTurns === "function" ? adapter.newTurns(document, state.baseline, "assistant") : []));
-          const observedAssistant = observedAssistantRecords.at(-1)
-            ?? (observedAssistants.length > 0 ? observedAssistants[observedAssistants.length - 1]
+          const observedAssistant = trackedPath
+            ? (observedAssistantRecords.at(-1) ?? null)
+            : (observedAssistants.length > 0 ? observedAssistants[observedAssistants.length - 1]
               : (userAcked ? adapter.newTurn(document, state.baseline, "assistant") : null));
           if (observedAssistantRecords.length > 0) assistantRecords = observedAssistantRecords;
           else if (observedAssistants.length > 0) assistantNodes = observedAssistants;
@@ -162,7 +168,7 @@
       const state = typeof adapter.dispatchTracked === "function"
         ? await adapter.dispatchTracked(document, message.envelope)
         : await adapter.dispatch(document, message.envelope);
-      const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration};
+      const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration};
       diagnostic("info", "user_turn_observed", job);
       await sendLifecycleUntilAck("USER_TURN_ACKED", job);
       monitor(message, state, true);
@@ -170,7 +176,22 @@
       const evidence = typeof adapter.trackedTurnObservation === "function"
         ? adapter.trackedTurnObservation(document, error?.turnTracker ?? null, message.envelope)
         : (typeof adapter.turnObservation === "function" ? adapter.turnObservation(document, null, message.envelope) : {});
-      diagnostic("error", "dispatch_receipt_missing", {jobId: message.jobId, bindingGeneration: message.bindingGeneration}, {...evidence, error_code: error instanceof Error ? error.message.split(":", 1)[0] : "DISPATCH_FAILED"});
+      const {candidates = [], ...summary} = evidence;
+      for (const candidate of candidates) {
+        diagnostic("info", "turn_candidate_observed", {jobId: message.jobId, bindingGeneration: message.bindingGeneration}, {
+          turn_key_sha256: await sha256Hex(candidate.turnKey),
+          fragment_key_sha256: await sha256Hex(candidate.fragmentKey),
+          role: candidate.role,
+          turn_index: candidate.turnIndex,
+          fragment_index: candidate.fragmentIndex,
+          fragment_count: candidate.fragmentCount,
+          length: candidate.canonical.length,
+          byte_length: new TextEncoder().encode(candidate.canonical).length,
+          sha256: await sha256Hex(candidate.canonical),
+          classification: candidate.classification,
+        });
+      }
+      diagnostic("error", "dispatch_receipt_missing", {jobId: message.jobId, bindingGeneration: message.bindingGeneration}, {...summary, error_code: error instanceof Error ? error.message.split(":", 1)[0] : "DISPATCH_FAILED"});
       throw error;
     }
   }
@@ -180,7 +201,7 @@
       ? adapter.reconcileTracked(document, message.envelope)
       : adapter.reconcile(document, message.envelope);
     if (observed.state === "user-present") {
-      const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration};
+      const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration};
       await sendLifecycle("USER_TURN_ACKED", job);
       if (observed.assistantRecords?.length > 0 || observed.assistants?.length > 0 || observed.assistant) await sendLifecycle("ASSISTANT_STARTED", job);
       monitor(message, observed, true, Boolean(observed.assistantRecords?.length > 0 || observed.assistants?.length > 0 || observed.assistant));
@@ -193,7 +214,7 @@
       return;
     }
     await sendLifecycle("RECONCILE_MISMATCH", {
-      jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration,
+      jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration,
     });
     active = null;
   }
@@ -202,9 +223,9 @@
     if (active) throw new Error("CONTENT_JOB_ALREADY_ACTIVE");
     requireLiveDeadline(message);
     adapter.pageSupported(location);
-    active = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration, starting: true};
+    active = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration, starting: true};
     void operation(message).catch(async (error) => {
-      const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration};
+      const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration};
       try { await sendLifecycle("SEND_UNCERTAIN", job, error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_TRIGGER_FAILED"); } catch {}
       if (active?.jobId === message.jobId) active = null;
     });

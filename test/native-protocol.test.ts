@@ -221,7 +221,7 @@ test("native bridge rejects unsupported minor and records peer version", () => {
   const store = new JobStore(join(root, "state.sqlite"));
   const bridge = new NativeBridge(new JobCoordinator(store));
   assert.throws(
-    () => bridge.handleInbound({schemaVersion: {major: 1, minor: 3}, type: "ARM_SESSION"}),
+    () => bridge.handleInbound({schemaVersion: {major: 1, minor: 4}, type: "ARM_SESSION"}),
     /NATIVE_SCHEMA_MINOR_UNSUPPORTED/,
   );
   bridge.handleInbound({
@@ -309,6 +309,34 @@ test("a newly manually armed session can continue the unresolved job", () => {
     sessionId: "session-b", jobId: job.job_id,
   });
   assert.equal(ack.phase, "USER_TURN_ACKED");
+  store.close();
+  rmSync(root, {recursive: true, force: true});
+});
+
+test("recovery ownership generation rejects a delayed loss from the previous session", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-ownership-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const bridge = new NativeBridge(new JobCoordinator(store), 60_000);
+  const relay = relayFixture();
+  const job = store.createOrGetJob(relay, relayFingerprint(relay), new Date(Date.now() + 60_000)).job;
+  store.transitionJob(job.job_id, "DISPATCHED");
+  const ownedA = store.bindJobSession(job.job_id, "session-a");
+  store.transitionJob(job.job_id, "RECONCILING");
+  const ownedB = store.bindJobSession(job.job_id, "session-b");
+  assert.ok(ownedB.ownership_generation > ownedA.ownership_generation);
+  bridge.handleInbound({
+    schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm-b",
+    sessionId: "session-b", extensionVersion: "0.2.8",
+  });
+  assert.throws(() => bridge.handleInbound({
+    schemaVersion: NATIVE_SCHEMA_VERSION, type: "SESSION_LOST", requestId: "loss-a",
+    sessionId: "session-a", jobId: job.job_id, ownershipGeneration: ownedA.ownership_generation,
+  }), /JOB_OWNERSHIP_STALE/);
+  const ack = bridge.handleInbound({
+    schemaVersion: NATIVE_SCHEMA_VERSION, type: "SESSION_LOST", requestId: "loss-b",
+    sessionId: "session-b", jobId: job.job_id, ownershipGeneration: ownedB.ownership_generation,
+  });
+  assert.equal(ack?.phase, "SESSION_LOST");
   store.close();
   rmSync(root, {recursive: true, force: true});
 });

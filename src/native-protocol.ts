@@ -5,7 +5,7 @@ import { JobCoordinator } from "./job-coordinator.ts";
 import type { StoredSession } from "./job-store.ts";
 import type { DiagnosticLogger, DiagnosticLevel } from "./diagnostic-log.ts";
 
-export const NATIVE_SCHEMA_VERSION = Object.freeze({major: 1, minor: 2});
+export const NATIVE_SCHEMA_VERSION = Object.freeze({major: 1, minor: 3});
 export const RELAY_ONLY_CAPABILITY = "relay-only-v1";
 const MAX_ASSISTANT_OUTPUT_BYTES = 131_072;
 
@@ -68,7 +68,7 @@ export class NativeBridge {
       const event = requireText(message, "event");
       const details = message.details !== null && typeof message.details === "object" && !Array.isArray(message.details)
         ? message.details as NativeRecord : {};
-      const persisted = this.diagnostics?.write(level, component, event, {
+      const disposition = this.diagnostics?.writeResult(level, component, event, {
         ...details,
         session_id: typeof message.sessionId === "string" ? message.sessionId : undefined,
         job_id: typeof message.jobId === "string" ? message.jobId : undefined,
@@ -79,13 +79,14 @@ export class NativeBridge {
         binding_generation: message.bindingGeneration,
         document_id: message.documentId,
         tab_id: message.tabId,
-      }) ?? false;
-      if (!persisted) throw new Error("DIAGNOSTIC_PERSIST_FAILED");
+      }) ?? "failed";
+      if (disposition === "failed") throw new Error("DIAGNOSTIC_PERSIST_FAILED");
       return {
         schemaVersion: NATIVE_SCHEMA_VERSION,
         type: "DIAGNOSTIC_ACK",
         responseToRequestId: requestId,
-        persisted: true,
+        persisted: disposition === "appended" || disposition === "duplicate",
+        disposition,
       };
     }
     if (type === "DISPATCH_TRIGGER_ACCEPTED" || type === "RECONCILE_TRIGGER_ACCEPTED") {
@@ -131,7 +132,12 @@ export class NativeBridge {
     const sessionId = requireText(message, "sessionId");
     const jobId = requireText(message, "jobId");
     const currentJob = this.coordinator.store.getJob(jobId);
+    const ownershipGeneration = Number.isSafeInteger(message.ownershipGeneration) ? message.ownershipGeneration as number : null;
+    if (ownershipGeneration !== null && ownershipGeneration !== currentJob.ownership_generation) {
+      throw new Error("JOB_OWNERSHIP_STALE");
+    }
     if (type === "SESSION_LOST") {
+      if (currentJob.session_id !== sessionId) throw new Error("JOB_OWNERSHIP_STALE");
       const active = this.coordinator.store.getActiveSession();
       const ownedExpired = currentJob.session_id === sessionId;
       if ((!active || active.session_id !== sessionId) && !ownedExpired) throw new Error("SESSION_NOT_ARMED");
@@ -180,6 +186,7 @@ export class NativeBridge {
     envelope: TriggerEnvelope;
     reviewMode?: "pr-comment" | "relay-only";
     deadline: string;
+    ownershipGeneration?: number;
   }): NativeRecord {
     this.assertReviewModeSupported(input.sessionId, input.reviewMode ?? "pr-comment");
     const job = this.coordinator.store.getJob(input.jobId);
@@ -197,6 +204,7 @@ export class NativeBridge {
       envelopeSha256: input.envelope.sha256,
       reviewMode: input.reviewMode ?? "pr-comment",
       deadline: input.deadline,
+      ownershipGeneration: input.ownershipGeneration ?? job.ownership_generation,
     };
   }
 
@@ -213,6 +221,7 @@ export class NativeBridge {
     reviewMode?: "pr-comment" | "relay-only";
     deadline: string;
     allowUnsentSend: boolean;
+    ownershipGeneration?: number;
   }): NativeRecord {
     this.assertReviewModeSupported(input.sessionId, input.reviewMode ?? "pr-comment");
     const job = this.coordinator.store.getJob(input.jobId);
@@ -229,6 +238,7 @@ export class NativeBridge {
       reviewMode: input.reviewMode ?? "pr-comment",
       deadline: input.deadline,
       allowUnsentSend: input.allowUnsentSend,
+      ownershipGeneration: input.ownershipGeneration ?? job.ownership_generation,
     };
   }
 

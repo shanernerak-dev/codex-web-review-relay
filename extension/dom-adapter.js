@@ -251,8 +251,28 @@
   }
   function messageContentNode(node, role) {
     if (!node?.querySelector) return node;
-    if (role === "user") return node.querySelector(".whitespace-pre-wrap") ?? node;
-    return node.querySelector(".markdown.prose") ?? node.querySelector(".markdown") ?? node;
+    if (role === "user") return node.querySelector(".whitespace-pre-wrap");
+    return node.querySelector(".markdown.prose") ?? node.querySelector(".markdown");
+  }
+  function turnShells(document) {
+    return Array.from(document.querySelectorAll("[data-testid^='conversation-turn-'], [data-testid='conversation-turn']"));
+  }
+  function mergeObservedOrder(previous, observed) {
+    const merged = previous.slice();
+    if (merged.length === 0) return observed.slice();
+    for (let index = 0; index < observed.length; index += 1) {
+      const key = observed[index];
+      if (merged.includes(key)) continue;
+      const nextKnown = observed.slice(index + 1).find((candidate) => merged.includes(candidate));
+      if (nextKnown !== undefined) {
+        merged.splice(merged.indexOf(nextKnown), 0, key);
+        continue;
+      }
+      const previousKnown = observed.slice(0, index).reverse().find((candidate) => merged.includes(candidate));
+      if (previousKnown !== undefined) merged.splice(merged.lastIndexOf(previousKnown) + 1, 0, key);
+      else merged.push(key);
+    }
+    return merged;
   }
   function createTurnTracker(document, captureBaseline = true) {
     const tracker = {records: new Map(), order: [], baselineKeys: new Set(), unstableBaselineNodes: new Set()};
@@ -268,16 +288,28 @@
   function harvestTurnTracker(document, tracker) {
     const pass = [];
     const passByKey = new Map();
+    const observedOrder = [];
+    for (const shell of turnShells(document)) {
+      const identity = stableTurnIdentity(shell);
+      const key = identity !== null ? identity : shell;
+      if (!observedOrder.includes(key)) observedOrder.push(key);
+      if (!tracker.records.has(key)) {
+        tracker.records.set(key, {key, identity, role: null, fragments: new Map(), nodes: [], shell});
+      } else {
+        tracker.records.get(key).shell = shell;
+      }
+    }
     for (const node of turns(document)) {
       const role = node.getAttribute("data-message-author-role");
       if (role !== "user" && role !== "assistant") continue;
       const identity = stableTurnIdentity(node);
-      const key = typeof identity === "string" ? identity : node;
+      const key = identity !== null ? identity : node;
       let group = passByKey.get(key);
       if (!group) {
         group = {key, identity, role, nodes: []};
         passByKey.set(key, group);
         pass.push(group);
+        if (!observedOrder.includes(key)) observedOrder.push(key);
       } else if (group.role !== role) {
         throw new Error("TURN_ROLE_AMBIGUOUS");
       }
@@ -300,6 +332,7 @@
       group.nodes.forEach((node, index) => {
         const fragmentKey = messageIdentity(node, index);
         const contentNode = messageContentNode(node, group.role);
+        if (!contentNode) return;
         liveFragmentKeys.add(fragmentKey);
         record.fragments.set(fragmentKey, {
           key: fragmentKey,
@@ -312,13 +345,12 @@
       });
       for (const [fragmentKey, fragment] of record.fragments) {
         if (liveFragmentKeys.has(fragmentKey)) continue;
-        if (typeof record.identity !== "string" || fragmentKey.startsWith("within:")) record.fragments.delete(fragmentKey);
+        if (record.identity === null || fragmentKey.startsWith("within:")) record.fragments.delete(fragmentKey);
         else fragment.detached = true;
       }
       nextOrder.push(group.key);
     }
-    for (const key of tracker.order) if (!nextOrder.includes(key) && tracker.records.has(key)) nextOrder.push(key);
-    tracker.order = nextOrder;
+    tracker.order = mergeObservedOrder(tracker.order, observedOrder.length > 0 ? observedOrder : nextOrder);
     return tracker;
   }
   function orderedFragments(record) {
@@ -392,11 +424,26 @@
     const records = tracker ? tracker.order.map((key) => tracker.records.get(key)).filter(Boolean) : [];
     const users = records.filter((record) => record.role === "user");
     const exact = users.filter((record) => turnRecordText(record) === envelope.trim());
+    const candidates = [];
+    users.forEach((record, turnIndex) => {
+      const fragments = orderedFragments(record);
+      fragments.forEach((fragment, fragmentIndex) => candidates.push({
+        turnKey: typeof record.identity === "string" ? record.identity : `generic-turn:${turnIndex}`,
+        fragmentKey: fragment.key,
+        role: record.role,
+        turnIndex,
+        fragmentIndex,
+        fragmentCount: fragments.length,
+        canonical: fragment.normalized,
+        classification: tracker?.baselineKeys?.has(record.key) ? "baseline" : "new",
+      }));
+    });
     return {
       candidate_count: users.reduce((sum, record) => sum + record.nodes.length, 0),
       count: users.length,
       exact_match_count: exact.length,
       baseline_count: tracker?.baselineKeys?.size ?? 0,
+      candidates,
     };
   }
   scope.ReviewRelayDomAdapter = {

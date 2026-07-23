@@ -7,6 +7,7 @@ const COMPONENTS = new Set(["native-host", "extension-background", "extension-co
 const EVENTS = new Set([
   "session_armed", "trigger_received", "trigger_accepted", "trigger_failed",
   "dispatch_started", "dispatch_receipt_missing", "monitor_started", "monitor_finished", "monitor_failed",
+  "turn_candidate_observed",
   "user_turn_observed", "assistant_turn_observed", "completion_snapshot",
   "lifecycle_requested", "lifecycle_received", "lifecycle_send", "lifecycle_native_received",
   "lifecycle_acked", "lifecycle_rejected", "diagnostic_rejected", "message_failed",
@@ -14,9 +15,9 @@ const EVENTS = new Set([
 const STRING_FIELDS = new Set([
   "session_id", "job_id", "request_id", "message_type", "phase", "error_code",
   "turn_id", "role", "state", "sha256", "event_id", "source_timestamp",
-  "binding_generation", "document_id",
+  "binding_generation", "document_id", "turn_key_sha256", "fragment_key_sha256", "classification",
 ]);
-const INTEGER_FIELDS = new Set(["attempt", "count", "length", "sequence", "tab_id", "candidate_count", "exact_match_count", "baseline_count"]);
+const INTEGER_FIELDS = new Set(["attempt", "count", "length", "sequence", "tab_id", "candidate_count", "exact_match_count", "baseline_count", "turn_index", "fragment_index", "fragment_count", "byte_length"]);
 const BOOLEAN_FIELDS = new Set(["connected", "generating", "response_idle", "quiet", "stable", "completion_observed"]);
 
 export interface DiagnosticEvent {
@@ -54,12 +55,12 @@ export class DiagnosticLogger {
     catch (error) { this.lastError = error instanceof Error ? error.message : "DIAGNOSTIC_INIT_FAILED"; }
   }
 
-  write(level: Exclude<DiagnosticLevel, "off">, component: string, event: string, fields: Record<string, unknown> = {}): boolean {
-    if (PRIORITY[this.level] < PRIORITY[level]) return true;
-    if (!COMPONENTS.has(component) || !EVENTS.has(event)) return false;
+  writeResult(level: Exclude<DiagnosticLevel, "off">, component: string, event: string, fields: Record<string, unknown> = {}): "appended" | "duplicate" | "filtered" | "failed" {
+    if (PRIORITY[this.level] < PRIORITY[level]) return "filtered";
+    if (!COMPONENTS.has(component) || !EVENTS.has(event)) return "failed";
     const safe = sanitizedFields(fields);
     const eventId = typeof safe.event_id === "string" ? safe.event_id : null;
-    if (eventId && this.seenEventIds.has(eventId)) return true;
+    if (eventId && this.seenEventIds.has(eventId)) return "duplicate";
     const record: DiagnosticEvent = {timestamp: new Date().toISOString(), level, component, event, ...safe};
     try {
       const line = `${JSON.stringify(record)}\n`;
@@ -70,11 +71,16 @@ export class DiagnosticLogger {
         if (this.seenEventIds.size > 1024) this.seenEventIds.delete(this.seenEventIds.values().next().value as string);
       }
       this.lastError = null;
-      return true;
+      return "appended";
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : "DIAGNOSTIC_WRITE_FAILED";
-      return false;
+      return "failed";
     }
+  }
+
+  write(level: Exclude<DiagnosticLevel, "off">, component: string, event: string, fields: Record<string, unknown> = {}): boolean {
+    const result = this.writeResult(level, component, event, fields);
+    return result === "appended" || result === "duplicate";
   }
 
   query(jobId: string, limit = 200): {log_path: string; events: DiagnosticEvent[]; truncated: boolean; log_error: string | null} {

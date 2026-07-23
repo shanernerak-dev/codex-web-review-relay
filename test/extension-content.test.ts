@@ -16,7 +16,7 @@ async function waitFor(predicate: () => boolean, timeout = 2_000): Promise<void>
 function harness(ackDelayMs = 0) {
   const events: string[] = [];
   const lifecycleMessages: any[] = [];
-  const calls = {dispatch: 0, resumeDraft: 0};
+  const calls = {dispatch: 0, resumeDraft: 0, legacyAssistantSearches: 0};
   let user = false;
   let assistant = false;
   let assistantOutputs = ["final review output"];
@@ -35,11 +35,21 @@ function harness(ackDelayMs = 0) {
   const adapter = {
     pageSupported: () => true,
     dispatch: () => { calls.dispatch += 1; return {baseline: new Set(), user: {}}; },
+    dispatchTracked: () => { calls.dispatch += 1; return {tracker: {}, userRecord: {key: "target-user"}}; },
     resumeDraft: () => { calls.resumeDraft += 1; return {baseline: new Set(), user: {}}; },
     reconcile: () => user
       ? {state: "user-present", user: {}, assistant: assistant ? {innerText: assistantOutputs.at(-1)} : null, assistants: assistant ? assistantOutputs.map((innerText) => ({innerText})) : [], baseline: new Set()}
       : {state: "missing", baseline: new Set()},
-    newTurn: (_document: unknown, _baseline: Set<unknown>, role: string) => role === "user" ? (user ? {} : null) : (assistant ? {innerText: assistantOutputs.at(-1)} : null),
+    reconcileTracked: () => user
+      ? {state: "user-present", tracker: {}, userRecord: {key: "target-user"}, assistantRecords: assistant ? assistantOutputs.map((innerText, index) => ({key: `assistant-${index}`, innerText})) : []}
+      : {state: "missing", tracker: {}},
+    newTurn: (_document: unknown, _baseline: Set<unknown>, role: string) => {
+      if (role === "assistant") calls.legacyAssistantSearches += 1;
+      return role === "user" ? (user ? {} : null) : (assistant ? {innerText: assistantOutputs.at(-1)} : null);
+    },
+    trackedAssistantTurnsAfter: () => assistant ? assistantOutputs.map((innerText, index) => ({key: `assistant-${index}`, innerText})) : [],
+    turnRecordText: (record: any) => record.innerText ?? "",
+    trackedAssistantComplete: () => assistantComplete && !codeCopy,
     assistantTurnsAfter: () => assistant ? assistantOutputs.map((innerText) => ({innerText})) : [],
     rawText: (node: any) => node?.innerText ?? "",
     rawTurnText: (_document: unknown, _node: any) => assistantOutputs.join("\n\n"),
@@ -119,6 +129,7 @@ function harness(ackDelayMs = 0) {
     setAssistantOutputs(values: string[]) { assistantOutputs = [...values]; },
     setAssistantComplete(value: boolean) { assistantComplete = value; },
     setAssistantCodeCopy(value: boolean) { codeCopy = value; },
+    legacyAssistantSearches() { return calls.legacyAssistantSearches; },
     setGenerating(value: boolean) { generating = value; },
     failNextTurnIdleAcks(value: number) { turnIdleAckFailures = value; },
     failNextUserTurnAcks(value: number) { userTurnAckFailures = value; },
@@ -172,6 +183,20 @@ test("content accepts a dispatch trigger before waiting for user-turn receipt", 
   const accepted = await h.dispatchRaw(9_000, "relay-only");
   assert.equal(accepted.ok, true);
   assert.ok(Date.now() - started < 75);
+});
+
+test("tracked monitor never falls back to a historical legacy assistant search", async () => {
+  const h = harness();
+  assert.equal((await h.dispatch(9_000, "relay-only")).ok, true);
+  await new Promise((resolveWait) => setTimeout(resolveWait, 400));
+  assert.equal(h.legacyAssistantSearches(), 0);
+  assert.equal(h.events.includes("ASSISTANT_STARTED"), false);
+  h.setAssistant(true);
+  h.setAssistantComplete(true);
+  h.mutate();
+  await waitFor(() => h.events.includes("TURN_IDLE"), 7_000);
+  assert.equal(h.legacyAssistantSearches(), 0);
+  assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "final review output");
 });
 
 test("relay-only monitor waits for a long response without requiring composer idle identity", async () => {

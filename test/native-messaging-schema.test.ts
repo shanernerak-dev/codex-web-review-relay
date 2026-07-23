@@ -20,7 +20,7 @@ function validate(value: unknown): void {
   execFileSync("python", ["-c", validator, schemaPath], {input: JSON.stringify(value), stdio: ["pipe", "pipe", "pipe"]});
 }
 
-test("native v1.2 schema accepts actual extension diagnostics messages", () => {
+test("native v1.3 schema accepts actual extension diagnostics messages", () => {
   assert.doesNotThrow(() => validate({
     schemaVersion: {major: 1, minor: 2}, type: "ARM_SESSION", requestId: "arm",
     sessionId: "session", extensionVersion: "0.2.4", capabilities: ["relay-only-v1", "diagnostics-v1"],
@@ -34,7 +34,11 @@ test("native v1.2 schema accepts actual extension diagnostics messages", () => {
     details: {job_id: "048af8d5-acf9-47c6-9448-2c85918710f7", message_type: "TURN_IDLE", length: 42},
   }));
   assert.doesNotThrow(() => validate({
-    schemaVersion: {major: 1, minor: 2}, type: "DIAGNOSTIC_ACK", responseToRequestId: "diag",
+    schemaVersion: {major: 1, minor: 3}, type: "DIAGNOSTIC_ACK", responseToRequestId: "diag",
+    persisted: true, disposition: "appended",
+  }));
+  assert.throws(() => validate({
+    schemaVersion: {major: 1, minor: 3}, type: "DIAGNOSTIC_ACK", responseToRequestId: "diag",
   }));
   assert.ok(schema.properties.capabilities.items.enum.includes("diagnostics-v1"));
 });

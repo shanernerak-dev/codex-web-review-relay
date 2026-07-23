@@ -1,6 +1,6 @@
 "use strict";
 const HOST_NAME = "dev.shanernerak.codex_web_review_relay";
-const SCHEMA_VERSION = {major: 1, minor: 2};
+const SCHEMA_VERSION = {major: 1, minor: 3};
 const CAPABILITIES = ["relay-only-v1", "diagnostics-v1"];
 const EXTENSION_VERSION = chrome.runtime.getManifest().version;
 const DIAGNOSTIC_KEY = "reviewRelayDiagnosticsV1";
@@ -69,7 +69,12 @@ async function flushDiagnostics() {
   const queue = Array.isArray(stored[DIAGNOSTIC_KEY]) ? stored[DIAGNOSTIC_KEY] : [];
   let sent = 0;
   for (const item of queue) {
-    try { await nativeRequest("DIAGNOSTIC_EVENT", item); sent += 1; }
+    try {
+      const response = await nativeRequest("DIAGNOSTIC_EVENT", item);
+      if (response?.type !== "DIAGNOSTIC_ACK") throw new Error("DIAGNOSTIC_ACK_TYPE_INVALID");
+      if (response.persisted !== true && response.disposition !== "filtered") throw new Error("DIAGNOSTIC_ACK_NOT_PERSISTED");
+      sent += 1;
+    }
     catch { break; }
   }
   if (sent > 0) await chrome.storage.local.set({[DIAGNOSTIC_KEY]: queue.slice(sent)});
@@ -82,6 +87,7 @@ async function onNativeMessage(message) {
   if (!["DISPATCH_TRIGGER", "RECONCILE_TRIGGER"].includes(message.type) || !armed || message.sessionId !== armed.sessionId) return;
   diagnostic("info", "trigger_received", {job_id: message.jobId, message_type: message.type});
   armed.activeJobId = message.jobId;
+  armed.ownershipGeneration = message.ownershipGeneration;
   armed.state = "ACTIVE";
   await persistArmed();
   try {
@@ -92,6 +98,7 @@ async function onNativeMessage(message) {
       kind: message.type, jobId: message.jobId, envelope: message.envelope, reviewMode: message.reviewMode,
       deadline: message.deadline, allowUnsentSend: message.allowUnsentSend,
       bindingGeneration: armed.bindingGeneration, documentId: armed.documentId,
+      ownershipGeneration: message.ownershipGeneration,
     });
     if (!response?.ok) throw new Error(response?.errorCode ?? "CONTENT_DISPATCH_REJECTED");
     ensurePort().postMessage({schemaVersion: SCHEMA_VERSION, type: `${message.type}_ACCEPTED`, responseToRequestId: message.requestId, sessionId: armed.sessionId, jobId: message.jobId});
@@ -109,16 +116,16 @@ async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = nu
   if (type === "SESSION_LOST") {
     current.state = "INVALIDATING";
     try {
-      await nativeRequest(type, {sessionId: current.sessionId, jobId, ...(errorCode ? {errorCode} : {})});
+      await nativeRequest(type, {sessionId: current.sessionId, jobId, ownershipGeneration: current.ownershipGeneration, ...(errorCode ? {errorCode} : {})});
     } finally {
       await releaseBinding(current);
     }
     return;
   }
   diagnostic("info", "lifecycle_send", {job_id: jobId, message_type: type, ...(errorCode ? {error_code: errorCode} : {}), ...(assistantOutput !== null ? {length: assistantOutput.length} : {})});
-  await nativeRequest(type, {sessionId: current.sessionId, jobId, ...(errorCode ? {errorCode} : {}), ...(assistantOutput !== null ? {assistantOutput} : {})});
+  const response = await nativeRequest(type, {sessionId: current.sessionId, jobId, ownershipGeneration: current.ownershipGeneration, ...(errorCode ? {errorCode} : {}), ...(assistantOutput !== null ? {assistantOutput} : {})});
   diagnostic("info", "lifecycle_acked", {job_id: jobId, message_type: type});
-  if (["TURN_IDLE", "SEND_UNCERTAIN", "TURN_TIMEOUT"].includes(type) && armed?.sessionId === current.sessionId) {
+  if (["TURN_IDLE", "SEND_UNCERTAIN", "BLOCKED", "MISMATCH", "TIMEOUT"].includes(response?.phase) && armed?.sessionId === current.sessionId) {
     armed.activeJobId = null;
     armed.state = "ARMED";
     await persistArmed();
@@ -214,6 +221,7 @@ async function invalidateBinding(errorCode) {
   if (current.activeJobId) {
     await chrome.storage.local.set({[PENDING_LOSS_KEY]: {
       sessionId: current.sessionId, jobId: current.activeJobId, errorCode,
+      ownershipGeneration: current.ownershipGeneration,
       eventId: uuid(), sourceTimestamp: new Date().toISOString(),
     }});
     await deliverPendingSessionLoss();
@@ -225,10 +233,14 @@ async function deliverPendingSessionLoss() {
   const pendingLoss = (await chrome.storage.local.get(PENDING_LOSS_KEY))[PENDING_LOSS_KEY];
   if (!pendingLoss?.sessionId || !pendingLoss?.jobId) return;
   try {
-    await nativeRequest("SESSION_LOST", {sessionId: pendingLoss.sessionId, jobId: pendingLoss.jobId, errorCode: pendingLoss.errorCode});
+    await nativeRequest("SESSION_LOST", {sessionId: pendingLoss.sessionId, jobId: pendingLoss.jobId, ownershipGeneration: pendingLoss.ownershipGeneration, errorCode: pendingLoss.errorCode});
     await nativeRequest("DISARM_SESSION", {sessionId: pendingLoss.sessionId});
     await chrome.storage.local.remove(PENDING_LOSS_KEY);
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === "JOB_OWNERSHIP_STALE") {
+      await chrome.storage.local.remove(PENDING_LOSS_KEY);
+      return;
+    }
     setTimeout(() => { void deliverPendingSessionLoss(); }, 1_000);
   }
 }

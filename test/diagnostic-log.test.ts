@@ -53,3 +53,28 @@ test("diagnostic query deduplicates event IDs across native restarts", () => {
   assert.equal(new DiagnosticLogger(path, "info", 65_536, 2).query("job-a").events.length, 1);
   rmSync(root, {recursive: true, force: true});
 });
+
+test("diagnostic query preserves bounded turn-structure evidence without message text", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-diagnostic-turn-"));
+  const path = join(root, "events.jsonl");
+  const logger = new DiagnosticLogger(path, "info", 65_536, 2);
+  assert.equal(logger.write("info", "extension-content", "turn_candidate_observed", {
+    job_id: "job-a",
+    turn_key_sha256: "a".repeat(64),
+    fragment_key_sha256: "b".repeat(64),
+    role: "user",
+    turn_index: 1,
+    fragment_index: 0,
+    fragment_count: 2,
+    length: 42,
+    byte_length: 44,
+    sha256: "c".repeat(64),
+    classification: "new",
+    envelope: "must not persist",
+  }), true);
+  const [event] = logger.query("job-a").events;
+  assert.equal(event.turn_key_sha256, "a".repeat(64));
+  assert.equal(event.fragment_count, 2);
+  assert.equal(event.envelope, undefined);
+  rmSync(root, {recursive: true, force: true});
+});

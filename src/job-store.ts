@@ -18,7 +18,7 @@ const TRANSITIONS: Record<JobPhase, ReadonlySet<JobPhase>> = {
   TURN_IDLE: new Set(),
   SESSION_LOST: new Set(["RECONCILING", "BLOCKED", "MISMATCH", "TIMEOUT"]),
   SEND_UNCERTAIN: new Set(["RECONCILING", "BLOCKED", "MISMATCH", "TIMEOUT"]),
-  RECONCILING: new Set(["DISPATCHED", "USER_TURN_ACKED", "ASSISTANT_STARTED", "SEND_UNCERTAIN", "BLOCKED", "MISMATCH", "TIMEOUT"]),
+  RECONCILING: new Set(["DISPATCHED", "USER_TURN_ACKED", "ASSISTANT_STARTED", "SESSION_LOST", "SEND_UNCERTAIN", "BLOCKED", "MISMATCH", "TIMEOUT"]),
   BLOCKED: new Set(),
   MISMATCH: new Set(),
   TIMEOUT: new Set(),
@@ -32,6 +32,7 @@ export interface StoredJob {
   relay_json: string | null;
   reviewed_head: string;
   session_id: string | null;
+  ownership_generation: number;
   conversation_identity: string | null;
   phase: JobPhase;
   recovery_from: JobPhase | null;
@@ -83,6 +84,7 @@ export class JobStore extends EventEmitter {
         relay_json TEXT,
         reviewed_head TEXT NOT NULL,
         session_id TEXT,
+        ownership_generation INTEGER NOT NULL DEFAULT 0,
         conversation_identity TEXT,
         phase TEXT NOT NULL,
         recovery_from TEXT,
@@ -114,6 +116,7 @@ export class JobStore extends EventEmitter {
     `);
     for (const statement of [
       "ALTER TABLE jobs ADD COLUMN session_id TEXT",
+      "ALTER TABLE jobs ADD COLUMN ownership_generation INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE jobs ADD COLUMN relay_json TEXT",
       "ALTER TABLE jobs ADD COLUMN conversation_identity TEXT",
       "ALTER TABLE jobs ADD COLUMN recovery_send_used INTEGER NOT NULL DEFAULT 0",
@@ -213,7 +216,7 @@ export class JobStore extends EventEmitter {
   }
 
   bindJobSession(jobId: string, sessionId: string): StoredJob {
-    const result = this.db.prepare("UPDATE jobs SET session_id = ?, updated_at = ? WHERE job_id = ?")
+    const result = this.db.prepare("UPDATE jobs SET session_id = ?, ownership_generation = ownership_generation + 1, updated_at = ? WHERE job_id = ?")
       .run(sessionId, new Date().toISOString(), jobId);
     if (result.changes !== 1) throw new Error("JOB_NOT_FOUND");
     return this.getJob(jobId);

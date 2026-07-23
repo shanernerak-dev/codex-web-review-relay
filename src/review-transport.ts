@@ -192,6 +192,7 @@ export class ReviewTransportService {
     session = this.store.getActiveSession();
     if (!session) throw new Error("SESSION_NOT_ARMED");
     if (current.phase === "CREATED") {
+      current = this.store.bindJobSession(current.job_id, session.session_id);
       const dispatch = this.bridge.createDispatch({
         sessionId: session.session_id,
         jobId: current.job_id,
@@ -199,10 +200,11 @@ export class ReviewTransportService {
         envelope: renderTriggerEnvelope(relay),
         reviewMode: relay.target_kind === "commit" ? "relay-only" : "pr-comment",
         deadline: current.deadline,
+        ownershipGeneration: current.ownership_generation,
       });
       const accepted = this.bridge.expectOutboundAck(dispatch);
       try {
-        this.bridge.markDispatchWritten(current.job_id, session.session_id);
+        this.bridge.markDispatchWritten(current.job_id);
         this.writeDispatch(dispatch);
         await accepted;
         this.ownedJobs.add(current.job_id);
@@ -223,6 +225,7 @@ export class ReviewTransportService {
         return publicStatus(this.coordinator.transition(current.job_id, "TIMEOUT", "TURN_DEADLINE_EXCEEDED"));
       }
       if (current.phase !== "RECONCILING") current = this.coordinator.transition(current.job_id, "RECONCILING");
+      current = this.store.bindJobSession(current.job_id, session.session_id);
       if (Date.now() >= Date.parse(current.deadline)) {
         return publicStatus(this.coordinator.transition(current.job_id, "TIMEOUT", "TURN_DEADLINE_EXCEEDED"));
       }
@@ -234,6 +237,7 @@ export class ReviewTransportService {
         reviewMode: relay.target_kind === "commit" ? "relay-only" : "pr-comment",
         deadline: current.deadline,
         allowUnsentSend: this.store.claimRecoverySend(current.job_id),
+        ownershipGeneration: current.ownership_generation,
       });
       const accepted = this.bridge.expectOutboundAck(reconcile);
       try {
