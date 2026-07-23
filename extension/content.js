@@ -49,8 +49,11 @@
     let candidateOutputSince = 0;
     let nextIdleAttemptAt = 0;
     let idleSendPending = false;
+    const tracker = state.tracker ?? null;
+    let userRecord = state.userRecord ?? null;
     let userNode = state.user ?? null;
-    if (userNode) userAcked = true;
+    if (userRecord || userNode) userAcked = true;
+    let assistantRecords = Array.isArray(state.assistantRecords) ? state.assistantRecords : [];
     let assistantNode = state.assistant ?? null;
     let assistantNodes = Array.isArray(state.assistants) ? state.assistants : (state.assistant ? [state.assistant] : []);
     let lastMutationAt = Date.now();
@@ -63,18 +66,37 @@
         do {
           inspectPending = false;
           if (!userAcked) {
-            const observedUser = adapter.newTurn(document, state.baseline, "user", message.envelope);
-            if (observedUser) { userNode = observedUser; diagnostic("info", "user_turn_observed", job); await sendLifecycle("USER_TURN_ACKED", job); userAcked = true; }
+            const observedUserRecord = tracker && typeof adapter.findTrackedUserTurn === "function"
+              ? adapter.findTrackedUserTurn(document, tracker, message.envelope)
+              : null;
+            const observedUser = observedUserRecord ?? adapter.newTurn(document, state.baseline, "user", message.envelope);
+            if (observedUser) {
+              if (observedUserRecord) userRecord = observedUserRecord; else userNode = observedUser;
+              diagnostic("info", "user_turn_observed", job);
+              await sendLifecycle("USER_TURN_ACKED", job);
+              userAcked = true;
+            }
           }
-          const observedAssistants = userAcked && userNode && typeof adapter.assistantTurnsAfter === "function"
-            ? adapter.assistantTurnsAfter(document, userNode)
-            : (userAcked && typeof adapter.newTurns === "function" ? adapter.newTurns(document, state.baseline, "assistant") : []);
-          const observedAssistant = observedAssistants.length > 0
-            ? observedAssistants[observedAssistants.length - 1]
-            : (userAcked ? adapter.newTurn(document, state.baseline, "assistant") : null);
-          if (observedAssistants.length > 0) assistantNodes = observedAssistants;
-          if (observedAssistant) assistantNode = observedAssistant;
-          if (userAcked && !assistantStarted && assistantNode) { diagnostic("info", "assistant_turn_observed", job, {count: assistantNodes.length || 1}); await sendLifecycle("ASSISTANT_STARTED", job); assistantStarted = true; assistantStartedAt = Date.now(); }
+          const observedAssistantRecords = userAcked && tracker && userRecord && typeof adapter.trackedAssistantTurnsAfter === "function"
+            ? adapter.trackedAssistantTurnsAfter(document, tracker, userRecord)
+            : [];
+          const observedAssistants = observedAssistantRecords.length > 0
+            ? []
+            : (userAcked && userNode && typeof adapter.assistantTurnsAfter === "function"
+              ? adapter.assistantTurnsAfter(document, userNode)
+              : (userAcked && typeof adapter.newTurns === "function" ? adapter.newTurns(document, state.baseline, "assistant") : []));
+          const observedAssistant = observedAssistantRecords.at(-1)
+            ?? (observedAssistants.length > 0 ? observedAssistants[observedAssistants.length - 1]
+              : (userAcked ? adapter.newTurn(document, state.baseline, "assistant") : null));
+          if (observedAssistantRecords.length > 0) assistantRecords = observedAssistantRecords;
+          else if (observedAssistants.length > 0) assistantNodes = observedAssistants;
+          if (observedAssistant && observedAssistantRecords.length === 0) assistantNode = observedAssistant;
+          if (userAcked && !assistantStarted && observedAssistant) {
+            diagnostic("info", "assistant_turn_observed", job, {count: assistantRecords.length || assistantNodes.length || 1});
+            await sendLifecycle("ASSISTANT_STARTED", job);
+            assistantStarted = true;
+            assistantStartedAt = Date.now();
+          }
           if (assistantStarted && adapter.isGenerating(document)) observedGenerating = true;
           const now = Date.now();
           const generating = adapter.isGenerating(document);
@@ -83,14 +105,18 @@
             ? adapter.isResponseIdle(document)
             : adapter.isIdle(document);
           if (assistantStarted && !generating && responseIdle) {
-            const output = adapter.rawTurnText(document, assistantNodes.length > 0 ? assistantNodes : assistantNode);
+            const output = assistantRecords.length > 0 && typeof adapter.turnRecordText === "function"
+              ? assistantRecords.map((record) => adapter.turnRecordText(record, true)).filter(Boolean).join("\n\n")
+              : adapter.rawTurnText(document, assistantNodes.length > 0 ? assistantNodes : assistantNode);
             if (output !== candidateOutput) {
               candidateOutput = output;
               candidateOutputSince = now;
             }
             const quiet = now - Math.max(lastMutationAt, assistantStartedAt) >= quietIdleMs;
             const stable = candidateOutput.length > 0 && now - candidateOutputSince >= outputStabilityMs;
-            const completedEvidence = typeof adapter.isAssistantComplete === "function" && adapter.isAssistantComplete(document, assistantNodes.length > 0 ? assistantNodes : assistantNode);
+            const completedEvidence = assistantRecords.length > 0 && typeof adapter.trackedAssistantComplete === "function"
+              ? assistantRecords.every((record) => adapter.trackedAssistantComplete(document, record))
+              : (typeof adapter.isAssistantComplete === "function" && adapter.isAssistantComplete(document, assistantNodes.length > 0 ? assistantNodes : assistantNode));
             const completionObserved = relayOnly ? completedEvidence : (observedGenerating || now - assistantStartedAt >= outputStabilityMs);
             diagnostic("trace", "completion_snapshot", job, {length: candidateOutput.length, generating, response_idle: responseIdle, quiet, stable, completion_observed: completionObserved});
             if (quiet && stable && completionObserved && !idleSendPending && now >= nextIdleAttemptAt) {
@@ -133,29 +159,37 @@
   async function runDispatch(message) {
     diagnostic("info", "dispatch_started", {jobId: message.jobId, bindingGeneration: message.bindingGeneration});
     try {
-      const state = await adapter.dispatch(document, message.envelope);
+      const state = typeof adapter.dispatchTracked === "function"
+        ? await adapter.dispatchTracked(document, message.envelope)
+        : await adapter.dispatch(document, message.envelope);
       const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration};
       diagnostic("info", "user_turn_observed", job);
       await sendLifecycleUntilAck("USER_TURN_ACKED", job);
       monitor(message, state, true);
     } catch (error) {
-      const evidence = typeof adapter.turnObservation === "function" ? adapter.turnObservation(document, null, message.envelope) : {};
+      const evidence = typeof adapter.trackedTurnObservation === "function"
+        ? adapter.trackedTurnObservation(document, error?.turnTracker ?? null, message.envelope)
+        : (typeof adapter.turnObservation === "function" ? adapter.turnObservation(document, null, message.envelope) : {});
       diagnostic("error", "dispatch_receipt_missing", {jobId: message.jobId, bindingGeneration: message.bindingGeneration}, {...evidence, error_code: error instanceof Error ? error.message.split(":", 1)[0] : "DISPATCH_FAILED"});
       throw error;
     }
   }
 
   async function runReconcile(message) {
-    const observed = adapter.reconcile(document, message.envelope);
+    const observed = typeof adapter.reconcileTracked === "function"
+      ? adapter.reconcileTracked(document, message.envelope)
+      : adapter.reconcile(document, message.envelope);
     if (observed.state === "user-present") {
       const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration};
       await sendLifecycle("USER_TURN_ACKED", job);
-      if (observed.assistants?.length > 0 || observed.assistant) await sendLifecycle("ASSISTANT_STARTED", job);
-      monitor(message, observed, true, Boolean(observed.assistants?.length > 0 || observed.assistant));
+      if (observed.assistantRecords?.length > 0 || observed.assistants?.length > 0 || observed.assistant) await sendLifecycle("ASSISTANT_STARTED", job);
+      monitor(message, observed, true, Boolean(observed.assistantRecords?.length > 0 || observed.assistants?.length > 0 || observed.assistant));
       return;
     }
     if (observed.state === "draft-unsent" && message.allowUnsentSend === true) {
-      monitor(message, await adapter.resumeDraft(document, message.envelope));
+      monitor(message, typeof adapter.resumeDraftTracked === "function"
+        ? await adapter.resumeDraftTracked(document, message.envelope)
+        : await adapter.resumeDraft(document, message.envelope));
       return;
     }
     await sendLifecycle("RECONCILE_MISMATCH", {

@@ -242,5 +242,169 @@
     const exact = records.filter((record) => normalizedGroupedText(record.nodes) === envelope.trim());
     return {candidate_count: candidates.length, count: records.length, exact_match_count: exact.length, baseline_count: baseline?.size ?? 0};
   }
-  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, isAssistantComplete, writeComposer, snapshotTurns, newTurn, newTurns, assistantTurnsAfter, turns, turnObservation, dispatch, reconcile, resumeDraft, isGenerating, isResponseIdle, isIdle};
+  function messageIdentity(node, withinTurn) {
+    const messageId = node?.getAttribute?.("data-message-id");
+    if (messageId) return `message-id:${messageId}`;
+    const elementId = node?.getAttribute?.("id");
+    if (elementId) return `id:${elementId}`;
+    return `within:${withinTurn}`;
+  }
+  function messageContentNode(node, role) {
+    if (!node?.querySelector) return node;
+    if (role === "user") return node.querySelector(".whitespace-pre-wrap") ?? node;
+    return node.querySelector(".markdown.prose") ?? node.querySelector(".markdown") ?? node;
+  }
+  function createTurnTracker(document, captureBaseline = true) {
+    const tracker = {records: new Map(), order: [], baselineKeys: new Set(), unstableBaselineNodes: new Set()};
+    harvestTurnTracker(document, tracker);
+    if (captureBaseline) {
+      for (const key of tracker.order) tracker.baselineKeys.add(key);
+      for (const record of tracker.records.values()) {
+        if (typeof record.identity !== "string") for (const fragment of record.fragments.values()) tracker.unstableBaselineNodes.add(fragment.node);
+      }
+    }
+    return tracker;
+  }
+  function harvestTurnTracker(document, tracker) {
+    const pass = [];
+    const passByKey = new Map();
+    for (const node of turns(document)) {
+      const role = node.getAttribute("data-message-author-role");
+      if (role !== "user" && role !== "assistant") continue;
+      const identity = stableTurnIdentity(node);
+      const key = typeof identity === "string" ? identity : node;
+      let group = passByKey.get(key);
+      if (!group) {
+        group = {key, identity, role, nodes: []};
+        passByKey.set(key, group);
+        pass.push(group);
+      } else if (group.role !== role) {
+        throw new Error("TURN_ROLE_AMBIGUOUS");
+      }
+      group.nodes.push(node);
+    }
+    if (tracker.unstableBaselineNodes.size > 0) {
+      const currentNodes = new Set(turns(document));
+      if (Array.from(tracker.unstableBaselineNodes).some((node) => !currentNodes.has(node))) throw new Error("TURN_IDENTITY_UNSTABLE");
+    }
+    const nextOrder = [];
+    for (const group of pass) {
+      let record = tracker.records.get(group.key);
+      if (!record) {
+        record = {key: group.key, identity: group.identity, role: group.role, fragments: new Map(), nodes: []};
+        tracker.records.set(group.key, record);
+      }
+      record.role = group.role;
+      record.nodes = group.nodes.slice();
+      const liveFragmentKeys = new Set();
+      group.nodes.forEach((node, index) => {
+        const fragmentKey = messageIdentity(node, index);
+        const contentNode = messageContentNode(node, group.role);
+        liveFragmentKeys.add(fragmentKey);
+        record.fragments.set(fragmentKey, {
+          key: fragmentKey,
+          node,
+          contentNode,
+          normalized: normalizedText(contentNode),
+          raw: rawText(contentNode),
+          index,
+        });
+      });
+      for (const [fragmentKey, fragment] of record.fragments) {
+        if (liveFragmentKeys.has(fragmentKey)) continue;
+        if (typeof record.identity !== "string" || fragmentKey.startsWith("within:")) record.fragments.delete(fragmentKey);
+        else fragment.detached = true;
+      }
+      nextOrder.push(group.key);
+    }
+    for (const key of tracker.order) if (!nextOrder.includes(key) && tracker.records.has(key)) nextOrder.push(key);
+    tracker.order = nextOrder;
+    return tracker;
+  }
+  function orderedFragments(record) {
+    return Array.from(record?.fragments?.values?.() ?? []).sort((a, b) => a.index - b.index);
+  }
+  function turnRecordText(record, raw = false) {
+    return orderedFragments(record).map((fragment) => raw ? fragment.raw : fragment.normalized)
+      .filter((text) => text.length > 0).join(raw ? "\n\n" : "\n").trim();
+  }
+  function findTrackedUserTurn(document, tracker, envelope, includeBaseline = false) {
+    harvestTurnTracker(document, tracker);
+    const matches = tracker.order.map((key) => tracker.records.get(key))
+      .filter((record) => record?.role === "user")
+      .filter((record) => includeBaseline || !tracker.baselineKeys.has(record.key))
+      .filter((record) => turnRecordText(record) === envelope.trim());
+    if (matches.length > 1) throw new Error("TURN_IDENTITY_AMBIGUOUS:user");
+    return matches[0] ?? null;
+  }
+  function trackedAssistantTurnsAfter(document, tracker, userRecord) {
+    harvestTurnTracker(document, tracker);
+    const index = tracker.order.indexOf(userRecord?.key);
+    if (index < 0) throw new Error("TURN_ANCHOR_AMBIGUOUS");
+    const out = [];
+    for (const key of tracker.order.slice(index + 1)) {
+      const record = tracker.records.get(key);
+      if (!record) continue;
+      if (record.role === "user") break;
+      if (record.role === "assistant") out.push(record);
+    }
+    return out;
+  }
+  function trackedAssistantComplete(document, record) {
+    const nodes = record?.nodes ?? orderedFragments(record).map((fragment) => fragment.node).filter(Boolean);
+    return nodes.length > 0 && isAssistantComplete(document, nodes);
+  }
+  async function dispatchTracked(document, envelope) {
+    const tracker = createTurnTracker(document, true);
+    const input = await writeComposer(document, composer(document), envelope);
+    const button = await waitFor(document, () => sendButton(document), "SEND_BUTTON_ENABLE_TIMEOUT");
+    button.click();
+    try {
+      const userRecord = await waitFor(document, () => findTrackedUserTurn(document, tracker, envelope), "SEND_CLICK_RECEIPT_MISSING", 60_000);
+      return {tracker, input, button, userRecord};
+    } catch (error) {
+      if (error && typeof error === "object") error.turnTracker = tracker;
+      throw error;
+    }
+  }
+  function reconcileTracked(document, envelope) {
+    const tracker = createTurnTracker(document, false);
+    const userRecord = findTrackedUserTurn(document, tracker, envelope, true);
+    if (userRecord) {
+      const assistantRecords = trackedAssistantTurnsAfter(document, tracker, userRecord);
+      return {state: "user-present", tracker, userRecord, assistantRecords};
+    }
+    let draftExact = false;
+    try { draftExact = normalizedText(composer(document)) === envelope.trim(); } catch {}
+    return {state: draftExact ? "draft-unsent" : "missing", tracker};
+  }
+  async function resumeDraftTracked(document, envelope) {
+    const input = composer(document);
+    if (normalizedText(input) !== envelope.trim()) throw new Error("RECONCILE_DRAFT_MISMATCH");
+    const tracker = createTurnTracker(document, true);
+    const button = await waitFor(document, () => sendButton(document), "SEND_BUTTON_ENABLE_TIMEOUT");
+    button.click();
+    const userRecord = await waitFor(document, () => findTrackedUserTurn(document, tracker, envelope), "SEND_CLICK_RECEIPT_MISSING", 60_000);
+    return {tracker, input, button, userRecord};
+  }
+  function trackedTurnObservation(document, tracker, envelope) {
+    try { harvestTurnTracker(document, tracker); } catch {}
+    const records = tracker ? tracker.order.map((key) => tracker.records.get(key)).filter(Boolean) : [];
+    const users = records.filter((record) => record.role === "user");
+    const exact = users.filter((record) => turnRecordText(record) === envelope.trim());
+    return {
+      candidate_count: users.reduce((sum, record) => sum + record.nodes.length, 0),
+      count: users.length,
+      exact_match_count: exact.length,
+      baseline_count: tracker?.baselineKeys?.size ?? 0,
+    };
+  }
+  scope.ReviewRelayDomAdapter = {
+    pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, isAssistantComplete,
+    writeComposer, snapshotTurns, newTurn, newTurns, assistantTurnsAfter, turns, turnObservation,
+    dispatch, reconcile, resumeDraft, isGenerating, isResponseIdle, isIdle,
+    createTurnTracker, harvestTurnTracker, turnRecordText, findTrackedUserTurn,
+    trackedAssistantTurnsAfter, trackedAssistantComplete, dispatchTracked, reconcileTracked,
+    resumeDraftTracked, trackedTurnObservation,
+  };
 })(globalThis);

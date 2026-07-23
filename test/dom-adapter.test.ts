@@ -441,3 +441,100 @@ test("DOM adapter ignores hidden duplicate controls but rejects two visible cont
   map.set("#prompt-textarea", [visibleInput, node({value: "", getClientRects: () => [{}]})]);
   assert.throws(() => adapter.composer(document), /COMPOSER_IDENTITY_MISMATCH/);
 });
+
+test("turn tracker reconstructs one user turn from ordered message fragments", () => {
+  const turnContainer = node({
+    getAttribute(name) { return name === "data-turn-id" ? "user-turn-target" : null; },
+  });
+  const fragment = (messageId: string, text: string) => node({
+    role: "user",
+    innerText: text,
+    getAttribute(name) {
+      if (name === "data-message-author-role") return "user";
+      if (name === "data-message-id") return messageId;
+      return null;
+    },
+    closest(selector) { return selector === "[data-turn-id]" ? turnContainer : null; },
+  });
+  const map = new Map<string, NodeLike[]>([["[data-message-author-role]", []]]);
+  const document = fakeDocument(map);
+  const tracker = adapter.createTurnTracker(document);
+  map.set("[data-message-author-role]", [
+    fragment("user-fragment-a", "Path: example"),
+    fragment("user-fragment-b", "Reviewed head: abc"),
+  ]);
+  const record = adapter.findTrackedUserTurn(document, tracker, "Path: example\nReviewed head: abc");
+  assert.equal(record.identity, "turn-id:user-turn-target");
+  assert.equal(adapter.turnRecordText(record), "Path: example\nReviewed head: abc");
+});
+
+test("turn tracker reads user content instead of role-node action labels", () => {
+  const turnContainer = node({getAttribute(name) { return name === "data-turn-id" ? "user-turn-content" : null; }});
+  const content = node({innerText: "Path: example\nReviewed head: abc"});
+  const roleNode = node({
+    role: "user",
+    innerText: "Path: example\nReviewed head: abc\nEdit message",
+    getAttribute(name) {
+      if (name === "data-message-author-role") return "user";
+      if (name === "data-message-id") return "user-message-content";
+      return null;
+    },
+    closest(selector) { return selector === "[data-turn-id]" ? turnContainer : null; },
+    querySelector(selector) { return selector === ".whitespace-pre-wrap" ? content : null; },
+  });
+  const document = fakeDocument(new Map([["[data-message-author-role]", [roleNode]]]));
+  const tracker = adapter.createTurnTracker(document, false);
+  const record = adapter.findTrackedUserTurn(document, tracker, "Path: example\nReviewed head: abc", true);
+  assert.equal(record.identity, "turn-id:user-turn-content");
+});
+
+test("turn tracker harvests hydrated fragments across passes and preserves document order", () => {
+  const userTurn = node({getAttribute(name) { return name === "data-turn-id" ? "user-turn" : null; }});
+  const assistantTurn = node({getAttribute(name) { return name === "data-turn-id" ? "assistant-turn" : null; }});
+  const fragment = (turn: NodeLike, role: string, messageId: string, text: string) => node({
+    role,
+    innerText: text,
+    getAttribute(name) {
+      if (name === "data-message-author-role") return role;
+      if (name === "data-message-id") return messageId;
+      return null;
+    },
+    closest(selector) { return selector === "[data-turn-id]" ? turn : null; },
+  });
+  const user = fragment(userTurn, "user", "user-message", "envelope");
+  const first = fragment(assistantTurn, "assistant", "assistant-a", "analysis");
+  const second = fragment(assistantTurn, "assistant", "assistant-b", "formal verdict");
+  const map = new Map<string, NodeLike[]>([["[data-message-author-role]", [user]]]);
+  const document = fakeDocument(map);
+  const tracker = adapter.createTurnTracker(document, false);
+  const target = adapter.findTrackedUserTurn(document, tracker, "envelope", true);
+  map.set("[data-message-author-role]", [user, first]);
+  assert.deepEqual(adapter.trackedAssistantTurnsAfter(document, tracker, target).map((record: any) => adapter.turnRecordText(record, true)), ["analysis"]);
+  map.set("[data-message-author-role]", [user, second]);
+  const assistants = adapter.trackedAssistantTurnsAfter(document, tracker, target);
+  assert.equal(assistants.length, 1);
+  assert.equal(adapter.turnRecordText(assistants[0], true), "analysis\n\nformal verdict");
+});
+
+test("turn tracker updates a stable message after DOM replacement instead of duplicating it", () => {
+  const turnContainer = node({getAttribute(name) { return name === "data-turn-id" ? "assistant-turn" : null; }});
+  const assistant = (text: string) => node({
+    role: "assistant",
+    innerText: text,
+    getAttribute(name) {
+      if (name === "data-message-author-role") return "assistant";
+      if (name === "data-message-id") return "assistant-message";
+      return null;
+    },
+    closest(selector) { return selector === "[data-turn-id]" ? turnContainer : null; },
+  });
+  const map = new Map<string, NodeLike[]>([["[data-message-author-role]", [assistant("partial")]]]);
+  const document = fakeDocument(map);
+  const tracker = adapter.createTurnTracker(document, false);
+  const record = tracker.records.get("turn-id:assistant-turn");
+  assert.equal(adapter.turnRecordText(record, true), "partial");
+  map.set("[data-message-author-role]", [assistant("complete formal verdict")]);
+  adapter.harvestTurnTracker(document, tracker);
+  assert.equal(adapter.turnRecordText(record, true), "complete formal verdict");
+  assert.equal(record.fragments.size, 1);
+});
