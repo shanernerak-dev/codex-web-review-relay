@@ -16,7 +16,7 @@ async function waitFor(predicate: () => boolean, timeout = 2_000): Promise<void>
 function harness(ackDelayMs = 0) {
   const events: string[] = [];
   const lifecycleMessages: any[] = [];
-  const calls = {dispatch: 0, resumeDraft: 0, legacyAssistantSearches: 0};
+  const calls = {dispatch: 0, resumeDraft: 0, resumeDraftTracked: 0, legacyAssistantSearches: 0};
   let user = false;
   let assistant = false;
   let assistantOutputs = ["final review output"];
@@ -25,6 +25,8 @@ function harness(ackDelayMs = 0) {
   let generating = false;
   let turnIdleAckFailures = 0;
   let userTurnAckFailures = 0;
+  let draftUnsent = false;
+  let trackedResumeError = false;
   const runtimeListeners: Array<(message: any, sender: any, respond: (value: any) => void) => boolean | void> = [];
   let observerCallback: (() => void) | null = null;
   class MutationObserver {
@@ -37,12 +39,33 @@ function harness(ackDelayMs = 0) {
     dispatch: () => { calls.dispatch += 1; return {baseline: new Set(), user: {}}; },
     dispatchTracked: () => { calls.dispatch += 1; return {tracker: {}, userRecord: {key: "target-user"}}; },
     resumeDraft: () => { calls.resumeDraft += 1; return {baseline: new Set(), user: {}}; },
+    resumeDraftTracked: () => {
+      calls.resumeDraftTracked += 1;
+      if (trackedResumeError) {
+        const error: any = new Error("SEND_CLICK_RECEIPT_MISSING");
+        error.turnTracker = {records: []};
+        throw error;
+      }
+      return {tracker: {}, userRecord: {key: "target-user"}};
+    },
     reconcile: () => user
       ? {state: "user-present", user: {}, assistant: assistant ? {innerText: assistantOutputs.at(-1)} : null, assistants: assistant ? assistantOutputs.map((innerText) => ({innerText})) : [], baseline: new Set()}
       : {state: "missing", baseline: new Set()},
-    reconcileTracked: () => user
-      ? {state: "user-present", tracker: {}, userRecord: {key: "target-user"}, assistantRecords: assistant ? assistantOutputs.map((innerText, index) => ({key: `assistant-${index}`, innerText})) : []}
-      : {state: "missing", tracker: {}},
+    reconcileTracked: () => draftUnsent
+      ? {state: "draft-unsent", tracker: {records: []}}
+      : (user
+        ? {state: "user-present", tracker: {}, userRecord: {key: "target-user"}, assistantRecords: assistant ? assistantOutputs.map((innerText, index) => ({key: `assistant-${index}`, innerText})) : []}
+        : {state: "missing", tracker: {}}),
+    trackedTurnObservation: () => ({
+      baseline_count: 0,
+      candidate_count: 1,
+      exact_match_count: 0,
+      candidates: [{
+        turnKey: "turn-1", fragmentKey: "record:no-fragment", role: "unknown",
+        turnIndex: 0, fragmentIndex: 0, fragmentCount: 0, canonical: "",
+        contentObserved: false, fragmentExtracted: false, classification: "new",
+      }],
+    }),
     newTurn: (_document: unknown, _baseline: Set<unknown>, role: string) => {
       if (role === "assistant") calls.legacyAssistantSearches += 1;
       return role === "user" ? (user ? {} : null) : (assistant ? {innerText: assistantOutputs.at(-1)} : null);
@@ -79,6 +102,7 @@ function harness(ackDelayMs = 0) {
     globalThis: null,
     document: {documentElement: {}},
     location: {origin: "https://chatgpt.com", pathname: "/c/conversation-a"},
+    TextEncoder,
     Date,
     Promise,
     Error,
@@ -111,7 +135,12 @@ function harness(ackDelayMs = 0) {
 
   function reconcile(deadlineMs = 2_000) {
     return new Promise<any>((resolveResponse) => {
-      runtimeListeners[0]({kind: "RECONCILE_TRIGGER", jobId: "job-1", envelope: "Path: x", reviewMode: "relay-only", allowUnsentSend: true, deadline: new Date(Date.now() + deadlineMs).toISOString()}, {}, resolveResponse);
+      runtimeListeners[0]({
+        kind: "RECONCILE_TRIGGER", jobId: "job-1", envelope: "Path: x",
+        reviewMode: "relay-only", allowUnsentSend: true,
+        bindingGeneration: "binding-1", ownershipGeneration: 1,
+        deadline: new Date(Date.now() + deadlineMs).toISOString(),
+      }, {}, resolveResponse);
     });
   }
 
@@ -131,6 +160,8 @@ function harness(ackDelayMs = 0) {
     setAssistantCodeCopy(value: boolean) { codeCopy = value; },
     legacyAssistantSearches() { return calls.legacyAssistantSearches; },
     setGenerating(value: boolean) { generating = value; },
+    setDraftUnsent(value: boolean) { draftUnsent = value; },
+    setTrackedResumeError(value: boolean) { trackedResumeError = value; },
     failNextTurnIdleAcks(value: number) { turnIdleAckFailures = value; },
     failNextUserTurnAcks(value: number) { userTurnAckFailures = value; },
   };
@@ -294,6 +325,21 @@ test("relay-only reconcile ignores a code-copy marker until turn completion evid
   assert.equal((await h.reconcile(1_200)).ok, true);
   await waitFor(() => h.events.includes("TURN_TIMEOUT"), 2_500);
   assert.equal(h.events.includes("TURN_IDLE"), false);
+});
+
+test("draft resume failure emits structural diagnostics before SEND_UNCERTAIN", async () => {
+  const h = harness();
+  h.setDraftUnsent(true);
+  h.setTrackedResumeError(true);
+  assert.equal((await h.reconcile(2_000)).ok, true);
+  await waitFor(() => h.lifecycleMessages.some((entry) => entry.type === "SEND_UNCERTAIN"));
+  const candidateIndex = h.lifecycleMessages.findIndex((entry) => entry.event === "turn_candidate_observed");
+  const uncertainIndex = h.lifecycleMessages.findIndex((entry) => entry.type === "SEND_UNCERTAIN");
+  assert.ok(candidateIndex >= 0);
+  assert.ok(candidateIndex < uncertainIndex);
+  assert.equal(h.lifecycleMessages[candidateIndex].bindingGeneration, "binding-1");
+  assert.equal(h.lifecycleMessages[candidateIndex].ownershipGeneration, 1);
+  assert.equal(h.calls.resumeDraftTracked, 1);
 });
 
 test("relay-only direct fast completion does not require an observed generating phase", async () => {

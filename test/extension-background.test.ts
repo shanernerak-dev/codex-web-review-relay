@@ -388,6 +388,65 @@ test("concurrent terminal admission preserves exactly one authoritative event", 
   assert.equal((await timeout).ok, true);
 });
 
+test("timeout-first terminal admission prevents a later TURN_IDLE overwrite", async () => {
+  const h = harness();
+  const armResult = h.runtime({kind: "POPUP_ARM"});
+  await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
+  const nativePort = h.ports[0];
+  const armRequest = nativePort.messages.find((message) => message.type === "ARM_SESSION");
+  h.respondTo(nativePort, armRequest, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
+  await armResult;
+  await nativePort.onMessage.emit({
+    schemaVersion: {major: 1, minor: 3}, type: "DISPATCH_TRIGGER", requestId: "dispatch-timeout-first",
+    sessionId: armRequest.sessionId, jobId: "job-timeout-first", envelope: "Path: x",
+    ownershipGeneration: 7, deadline: new Date(Date.now() + 10_000).toISOString(),
+  });
+  const timeout = h.runtime({kind: "LIFECYCLE", type: "TURN_TIMEOUT", jobId: "job-timeout-first", ownershipGeneration: 7});
+  const idle = h.runtime({kind: "LIFECYCLE", type: "TURN_IDLE", jobId: "job-timeout-first", ownershipGeneration: 7, assistantOutput: "late verdict"});
+  await waitFor(() => nativePort.messages.some((message) => message.type === "TURN_TIMEOUT"));
+  assert.equal(h.pendingTerminal().type, "TURN_TIMEOUT");
+  assert.equal(nativePort.messages.some((message) => message.type === "TURN_IDLE"), false);
+  const first = nativePort.messages.find((message) => message.type === "TURN_TIMEOUT");
+  h.respondTo(nativePort, first, "EVENT_ACK", {jobId: "job-timeout-first", phase: "TIMEOUT"});
+  assert.equal((await timeout).ok, true);
+  await waitFor(() => nativePort.messages.some((message) => message.type === "TURN_IDLE"));
+  const lateIdle = nativePort.messages.find((message) => message.type === "TURN_IDLE");
+  h.respondTo(nativePort, lateIdle, "EVENT_ACK", {jobId: "job-timeout-first", phase: "TIMEOUT"});
+  assert.equal((await idle).ok, true);
+  assert.equal(h.pendingTerminal(), null);
+});
+
+test("new ownership generation supersedes a stale pending terminal event", async () => {
+  const h = harness();
+  const armResult = h.runtime({kind: "POPUP_ARM"});
+  await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
+  const nativePort = h.ports[0];
+  const armRequest = nativePort.messages.find((message) => message.type === "ARM_SESSION");
+  h.respondTo(nativePort, armRequest, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
+  await armResult;
+  await nativePort.onMessage.emit({
+    schemaVersion: {major: 1, minor: 3}, type: "DISPATCH_TRIGGER", requestId: "dispatch-generation-1",
+    sessionId: armRequest.sessionId, jobId: "job-generation-migration", envelope: "Path: x",
+    ownershipGeneration: 1, deadline: new Date(Date.now() + 10_000).toISOString(),
+  });
+  void h.runtime({
+    kind: "LIFECYCLE", type: "SEND_UNCERTAIN", jobId: "job-generation-migration",
+    ownershipGeneration: 1, errorCode: "SEND_CLICK_RECEIPT_MISSING",
+  });
+  await waitFor(() => h.pendingTerminal()?.type === "SEND_UNCERTAIN");
+
+  await nativePort.onMessage.emit({
+    schemaVersion: {major: 1, minor: 3}, type: "RECONCILE_TRIGGER", requestId: "reconcile-generation-2",
+    sessionId: armRequest.sessionId, jobId: "job-generation-migration", envelope: "Path: x",
+    ownershipGeneration: 2, allowUnsentSend: false, deadline: new Date(Date.now() + 10_000).toISOString(),
+  });
+  assert.equal(h.pendingTerminal(), null);
+  assert.ok(nativePort.messages.some((message) =>
+    message.type === "RECONCILE_TRIGGER_ACCEPTED"
+      && message.responseToRequestId === "reconcile-generation-2"
+      && message.ownershipGeneration === 2));
+});
+
 test("diagnostic queue is retained for a correlated ACK without persisted evidence", async () => {
   const h = harness();
   const armResult = h.runtime({kind: "POPUP_ARM"});

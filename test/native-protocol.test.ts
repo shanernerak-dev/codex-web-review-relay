@@ -323,6 +323,27 @@ test("native bridge accepts fail-closed reconciliation mismatch", () => {
   store.close(); rmSync(root, {recursive: true, force: true});
 });
 
+test("native bridge acknowledges stale SEND_UNCERTAIN after authoritative recovery terminal", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-terminal-replay-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const coordinator = new JobCoordinator(store);
+  const bridge = new NativeBridge(coordinator, 60_000);
+  const relay = relayFixture();
+  const fingerprint = relayFingerprint(relay);
+  const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm", sessionId: "session-1", extensionVersion: "0.1.0"});
+  bridge.createDispatch({sessionId: "session-1", jobId: job.job_id, fingerprint, envelope: renderTriggerEnvelope(relay), deadline: job.deadline});
+  bridge.markDispatchWritten(job.job_id);
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "SEND_UNCERTAIN", requestId: "uncertain", sessionId: "session-1", jobId: job.job_id});
+  coordinator.transition(job.job_id, "RECONCILING");
+  bridge.createReconcile({sessionId: "session-1", jobId: job.job_id, fingerprint, envelope: renderTriggerEnvelope(relay), deadline: job.deadline, allowUnsentSend: false});
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "RECONCILE_MISMATCH", requestId: "mismatch", sessionId: "session-1", jobId: job.job_id});
+  const replay = bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "SEND_UNCERTAIN", requestId: "uncertain-replay", sessionId: "session-1", jobId: job.job_id});
+  assert.equal(replay.phase, "MISMATCH");
+  assert.equal(store.getJob(job.job_id).phase, "MISMATCH");
+  store.close(); rmSync(root, {recursive: true, force: true});
+});
+
 test("a newly manually armed session can continue the unresolved job", () => {
   const root = mkdtempSync(join(tmpdir(), "review-relay-native-binding-"));
   const store = new JobStore(join(root, "state.sqlite"));

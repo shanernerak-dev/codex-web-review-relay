@@ -168,8 +168,9 @@ export class NativeBridge {
     const phase = phaseByType[type as keyof typeof phaseByType];
     if (!phase) throw new Error(`NATIVE_MESSAGE_TYPE_UNSUPPORTED:${type}`);
     let current = this.coordinator.store.getJob(jobId);
-    const terminalPhases = new Set(["TURN_IDLE", "MISMATCH", "TIMEOUT", "BLOCKED"]);
-    if (terminalPhases.has(current.phase) && terminalPhases.has(phase) && current.phase !== phase) {
+    const authoritativeTerminalPhases = new Set(["TURN_IDLE", "MISMATCH", "TIMEOUT", "BLOCKED"]);
+    const browserCleanupPhases = new Set(["TURN_IDLE", "MISMATCH", "TIMEOUT", "SEND_UNCERTAIN"]);
+    if (authoritativeTerminalPhases.has(current.phase) && browserCleanupPhases.has(phase) && current.phase !== phase) {
       return {
         schemaVersion: NATIVE_SCHEMA_VERSION,
         type: "EVENT_ACK",

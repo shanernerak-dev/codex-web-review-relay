@@ -21,6 +21,12 @@ function validate(value: unknown): void {
 }
 
 test("native v1.3 schema accepts actual extension diagnostics messages", () => {
+  const triggerBase = {
+    schemaVersion: {major: 1, minor: 3}, requestId: "trigger", sessionId: "session",
+    jobId: "048af8d5-acf9-47c6-9448-2c85918710f7", fingerprint: "a".repeat(64),
+    envelope: "Path: x", envelopeSha256: "b".repeat(64), reviewMode: "relay-only",
+    deadline: "2026-07-23T08:00:00.000Z", ownershipGeneration: 2,
+  };
   assert.doesNotThrow(() => validate({
     schemaVersion: {major: 1, minor: 2}, type: "ARM_SESSION", requestId: "arm",
     sessionId: "session", extensionVersion: "0.2.4", capabilities: ["relay-only-v1", "diagnostics-v1"],
@@ -60,14 +66,10 @@ test("native v1.3 schema accepts actual extension diagnostics messages", () => {
     schemaVersion: {major: 1, minor: 3}, type: "DIAGNOSTIC_ACK", responseToRequestId: "diag",
     persisted: false, disposition: "appended",
   }));
-  const triggerBase = {
-    schemaVersion: {major: 1, minor: 3}, requestId: "trigger", sessionId: "session",
-    jobId: "048af8d5-acf9-47c6-9448-2c85918710f7", fingerprint: "a".repeat(64),
-    envelope: "Path: x", envelopeSha256: "b".repeat(64), reviewMode: "relay-only",
-    deadline: "2026-07-23T08:00:00.000Z", ownershipGeneration: 2,
-  };
   assert.doesNotThrow(() => validate({...triggerBase, type: "DISPATCH_TRIGGER"}));
   assert.doesNotThrow(() => validate({...triggerBase, type: "RECONCILE_TRIGGER", allowUnsentSend: false}));
+  assert.doesNotThrow(() => validate({...triggerBase, type: "DISPATCH_TRIGGER", reviewMode: "pr-comment"}));
+  assert.doesNotThrow(() => validate({...triggerBase, type: "RECONCILE_TRIGGER", reviewMode: "pr-comment", allowUnsentSend: false}));
   assert.doesNotThrow(() => validate({
     schemaVersion: {major: 1, minor: 3}, type: "DISPATCH_TRIGGER_ACCEPTED",
     responseToRequestId: "trigger", sessionId: "session",

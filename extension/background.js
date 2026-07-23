@@ -89,6 +89,10 @@ async function onNativeMessage(message) {
   }
   if (!["DISPATCH_TRIGGER", "RECONCILE_TRIGGER"].includes(message.type) || !armed || message.sessionId !== armed.sessionId) return;
   diagnostic("info", "trigger_received", {job_id: message.jobId, message_type: message.type});
+  const pendingTerminal = (await chrome.storage.local.get(PENDING_TERMINAL_KEY))[PENDING_TERMINAL_KEY];
+  if (pendingTerminal?.jobId === message.jobId && pendingTerminal.ownershipGeneration !== message.ownershipGeneration) {
+    await chrome.storage.local.remove(PENDING_TERMINAL_KEY);
+  }
   armed.activeJobId = message.jobId;
   armed.ownershipGeneration = message.ownershipGeneration;
   armed.state = "ACTIVE";
@@ -170,7 +174,13 @@ async function rearmSaved(saved) {
 }
 async function deliverPendingTerminalLifecycle() {
   const item = (await chrome.storage.local.get(PENDING_TERMINAL_KEY))[PENDING_TERMINAL_KEY];
-  if (!item?.type || !item?.jobId || !armed || item.sessionId !== armed.sessionId) return;
+  if (!item?.type || !item?.jobId || !armed) return;
+  if (item.sessionId !== armed.sessionId) {
+    if (item.jobId === armed.activeJobId && item.ownershipGeneration !== armed.ownershipGeneration) {
+      await chrome.storage.local.remove(PENDING_TERMINAL_KEY);
+    }
+    return;
+  }
   try {
     await sendLifecycle(item.type, item.jobId, item.errorCode, item.assistantOutput, item.ownershipGeneration);
   } catch {
