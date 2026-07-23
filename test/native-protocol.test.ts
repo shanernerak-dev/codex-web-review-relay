@@ -169,6 +169,42 @@ test("native bridge rejects relay-only dispatch for a legacy extension before DO
   store.close(); rmSync(root, {recursive: true, force: true});
 });
 
+test("relay-only requires v1.3 ownership generation and exact persisted owner", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-generation-contract-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const coordinator = new JobCoordinator(store);
+  const bridge = new NativeBridge(coordinator, 60_000);
+  const relay = relayFixture({
+    schema_version: {major: 1, minor: 1}, target_kind: "commit", target_id: "review-generation",
+    target_pr: null, handoff_path: ".agent/review_handoffs/review-generation/main/round-01-review-request.md",
+  });
+  const fingerprint = relayFingerprint(relay);
+  const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+  bridge.handleInbound({schemaVersion: {major: 1, minor: 2}, type: "ARM_SESSION", requestId: "old-arm", sessionId: "old", extensionVersion: "0.2.8", capabilities: ["relay-only-v1"]});
+  assert.throws(() => bridge.createDispatch({
+    sessionId: "old", jobId: job.job_id, fingerprint, envelope: renderTriggerEnvelope(relay),
+    reviewMode: "relay-only", deadline: job.deadline,
+  }), /RELAY_ONLY_EXTENSION_UNSUPPORTED/);
+  bridge.handleInbound({schemaVersion: {major: 1, minor: 2}, type: "DISARM_SESSION", requestId: "old-disarm", sessionId: "old"});
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm", sessionId: "current", extensionVersion: "0.2.9", capabilities: ["relay-only-v1"]});
+  const owned = store.bindJobSession(job.job_id, "current");
+  bridge.markDispatchWritten(job.job_id);
+  assert.throws(() => bridge.handleInbound({
+    schemaVersion: NATIVE_SCHEMA_VERSION, type: "USER_TURN_ACKED", requestId: "missing-generation",
+    sessionId: "current", jobId: job.job_id,
+  }), /NATIVE_MESSAGE_INVALID:ownershipGeneration/);
+  assert.throws(() => bridge.handleInbound({
+    schemaVersion: NATIVE_SCHEMA_VERSION, type: "USER_TURN_ACKED", requestId: "wrong-owner",
+    sessionId: "old", jobId: job.job_id, ownershipGeneration: owned.ownership_generation,
+  }), /SESSION_NOT_ARMED|JOB_OWNERSHIP_STALE/);
+  const ack = bridge.handleInbound({
+    schemaVersion: NATIVE_SCHEMA_VERSION, type: "USER_TURN_ACKED", requestId: "valid",
+    sessionId: "current", jobId: job.job_id, ownershipGeneration: owned.ownership_generation,
+  });
+  assert.equal(ack?.phase, "USER_TURN_ACKED");
+  store.close(); rmSync(root, {recursive: true, force: true});
+});
+
 test("native bridge rejects oversized assistant output before completing the job", () => {
   const root = mkdtempSync(join(tmpdir(), "review-relay-native-output-limit-"));
   const store = new JobStore(join(root, "state.sqlite"));
@@ -357,6 +393,7 @@ test("native bridge requires correlated dispatch acceptance and tolerates duplic
     responseToRequestId: dispatch.requestId,
     sessionId: "session-1",
     jobId: job.job_id,
+    ownershipGeneration: dispatch.ownershipGeneration,
   };
   assert.equal(bridge.handleInbound(acknowledgement), null);
   await accepted;

@@ -55,25 +55,26 @@
   }
   function turns(document) { return Array.from(document.querySelectorAll(TURN_SELECTOR)); }
   function stableTurnIdentity(node) {
-    const containers = [
-      node?.closest?.("[data-turn-id]") ?? null,
-      node?.closest?.("[data-message-id]") ?? null,
-      node?.closest?.("[data-testid^='conversation-turn-']") ?? null,
-      node?.closest?.("[data-testid='conversation-turn']") ?? null,
-    ].filter(Boolean);
+    const outerTurn = node?.closest?.("[data-turn-id]")
+      ?? node?.closest?.("[data-testid^='conversation-turn-']")
+      ?? node?.closest?.("[data-testid='conversation-turn']")
+      ?? null;
+    const containers = outerTurn ? [outerTurn] : [node?.closest?.("[data-message-id]") ?? null].filter(Boolean);
     for (const container of containers) {
       const turnId = container.getAttribute?.("data-turn-id");
       if (turnId) return `turn-id:${turnId}`;
-      const messageId = container.getAttribute?.("data-message-id");
-      if (messageId) return `message-id:${messageId}`;
       const testId = container.getAttribute?.("data-testid");
       if (testId && testId !== "conversation-turn") return `testid:${testId}`;
       const elementId = container.getAttribute?.("id");
       if (elementId) return `id:${elementId}`;
+      if (!outerTurn) {
+        const messageId = container.getAttribute?.("data-message-id");
+        if (messageId) return `message-id:${messageId}`;
+      }
     }
     // A generic conversation-turn has no cross-render stable key. Keep its node
     // identity for the current DOM pass, but do not pretend it survives a rerender.
-    return node?.closest?.("[data-testid='conversation-turn']") ?? null;
+    return outerTurn?.getAttribute?.("data-testid") === "conversation-turn" ? outerTurn : null;
   }
   function oneAssistantTurn(matches) {
     if (matches.length <= 1) return matches[0] ?? null;
@@ -378,6 +379,7 @@
       const record = tracker.records.get(key);
       if (!record) continue;
       if (record.role === "user") break;
+      if (record.role === null) throw new Error("TURN_BOUNDARY_UNHYDRATED");
       if (record.role === "assistant") out.push(record);
     }
     return out;
@@ -425,8 +427,21 @@
     const users = records.filter((record) => record.role === "user");
     const exact = users.filter((record) => turnRecordText(record) === envelope.trim());
     const candidates = [];
-    users.forEach((record, turnIndex) => {
+    users.forEach((record) => {
+      const turnIndex = tracker.order.indexOf(record.key);
       const fragments = orderedFragments(record);
+      if (fragments.length === 0) candidates.push({
+        turnKey: typeof record.identity === "string" ? record.identity : `generic-turn:${turnIndex}`,
+        fragmentKey: "record:no-fragment",
+        role: record.role,
+        turnIndex,
+        fragmentIndex: 0,
+        fragmentCount: 0,
+        canonical: "",
+        contentObserved: false,
+        fragmentExtracted: false,
+        classification: tracker?.baselineKeys?.has(record.key) ? "baseline" : "new",
+      });
       fragments.forEach((fragment, fragmentIndex) => candidates.push({
         turnKey: typeof record.identity === "string" ? record.identity : `generic-turn:${turnIndex}`,
         fragmentKey: fragment.key,
@@ -435,6 +450,8 @@
         fragmentIndex,
         fragmentCount: fragments.length,
         canonical: fragment.normalized,
+        contentObserved: true,
+        fragmentExtracted: true,
         classification: tracker?.baselineKeys?.has(record.key) ? "baseline" : "new",
       }));
     });

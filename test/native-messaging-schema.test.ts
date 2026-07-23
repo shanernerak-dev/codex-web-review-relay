@@ -37,8 +37,23 @@ test("native v1.3 schema accepts actual extension diagnostics messages", () => {
     schemaVersion: {major: 1, minor: 3}, type: "DIAGNOSTIC_ACK", responseToRequestId: "diag",
     persisted: true, disposition: "appended",
   }));
+  assert.doesNotThrow(() => validate({
+    schemaVersion: {major: 1, minor: 2}, type: "DIAGNOSTIC_ACK", responseToRequestId: "diag",
+  }));
+  assert.doesNotThrow(() => validate({
+    schemaVersion: {major: 1, minor: 3}, type: "DIAGNOSTIC_ACK", responseToRequestId: "diag",
+    persisted: false, disposition: "filtered",
+  }));
   assert.throws(() => validate({
     schemaVersion: {major: 1, minor: 3}, type: "DIAGNOSTIC_ACK", responseToRequestId: "diag",
+    persisted: false, disposition: "appended",
+  }));
+  assert.throws(() => validate({
+    schemaVersion: {major: 1, minor: 3}, type: "DIAGNOSTIC_ACK", responseToRequestId: "diag",
+  }));
+  assert.throws(() => validate({
+    schemaVersion: {major: 1, minor: 3}, type: "TURN_IDLE", requestId: "idle",
+    sessionId: "session", jobId: "048af8d5-acf9-47c6-9448-2c85918710f7", assistantOutput: "verdict",
   }));
   assert.ok(schema.properties.capabilities.items.enum.includes("diagnostics-v1"));
 });

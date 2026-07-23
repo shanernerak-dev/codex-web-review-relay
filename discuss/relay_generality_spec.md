@@ -19,6 +19,7 @@
 - Stage 3 round-08（`stage3-main/round-08-review-fix`）：implementation commit `d204c843614ef76c919564c87d4849b86b509b11`，reviewed head `36bbfff58fd2ad57a2d4e53f42b2ea7c25a18e93`。Review response 已存在并返回 `REQUEST CHANGES`，新增 `RGEN-S3-015` 至 `RGEN-S3-018`。Job `5af991b6-4f4f-480c-a40a-c14800de7425` 先在 native 5 秒 acceptance window 内进入 `SEND_UNCERTAIN / NATIVE_DISPATCH_WRITE_FAILED`，但 Web review 随后继续并完成；diagnostics 另记录 `baseline_count=0`、`candidate_count=2`、`exact_match_count=0` 与 `SEND_CLICK_RECEIPT_MISSING`。完整 verdict 由 Maintainer transfer，transport acceptance 失败。后续修复只组合具有同一 stable turn identity 的 user fragments，并将 trigger acceptance 与 exact receipt lifecycle 解耦。
 - Stage 3 round-09（`stage3-main/round-09-review-fix`）：implementation commit `bdec54fd545af7b92b7a37a9dc8d09d526c9ddc9`，reviewed head `8d3792e0b12e4aeed6be04b6b4d21b7db9cb903a`。Job `b9fa3ded-fbc0-401a-bb6a-da68895157c1` 已证明 trigger acceptance 与 receipt wait 成功解耦：`trigger_received → dispatch_started → DISPATCH_TRIGGER_ACCEPTED → trigger_accepted`。但 60 秒后 exact user-turn receipt 仍以 `baseline_count=0`、`candidate_count=2`、`exact_match_count=0` 进入 `SEND_UNCERTAIN / SEND_CLICK_RECEIPT_MISSING`；本轮未形成可由 relay 取回的 formal verdict。该证据将下一步根因收窄到 conversation/turn parser 与 user-turn reconstruction，而非 model 首 token 或 review 思考耗时。
 - Stage 3 round-10（`stage3-main/round-10-review-fix`）：implementation commit `651ef59b83d72f1607139e86daab64ed8f3168a5`，reviewed head `54550b3cc95d80c3ecdf08a0b8306d65d931b5da`，job `f1927ec5-2fbd-4e68-a208-cbede086ee25`。Review response 返回 `REQUEST CHANGES`，新增 `RGEN-S3-019` 至 `RGEN-S3-021`，并保留 `RGEN-S3-009` / `013` / `016` / `017` / `018`。Transport 达到 `TURN_IDLE / completed`，持久化 SHA `11d4e68a5446730c4a1e6a8bf594de30a5ba5405d4b31685592aeeb22415c8a4`；但 `assistant_output` 在本轮 Web-agent footer 后错误拼接 round-07 历史 verdict，因此完整性 anchor gate 失败。正式 finding source 采用 Maintainer 提供的无污染全文；该 transport 结果只证明长输出 delivery/ACK 已闭合，不构成 parser acceptance。
+- Stage 3 round-11（`stage3-main/round-11-review-fix`）：implementation commit `030406d0500818631c81863d6924acbc8cfa904a`，reviewed head `4b2fafebfdb860b1b5906478f75862433a456b2f`，job `6b5cbe7c-6deb-42bf-9ac5-5f099fdc7e17`。Review response 返回 `REQUEST CHANGES`；`RGEN-S3-019` / `021` 已 `ACCEPTED`，`RGEN-S3-009` / `013` / `016` / `017` / `018` / `020` 保持开放。Transport 达到 `TURN_IDLE / completed`，持久化 SHA `b3021c33ecde57da2cf7fbf7aeead660cc4c9759e30b090e260216fb20003df6`；MCP 全文具有正确首锚点、唯一且位于末尾的当前 Web-agent footer，且未拼接历史 verdict，因此本轮完整 `assistant_output` 是正式 finding source。该结果证明单一目标 assistant turn 的长输出 delivery/ACK 路径本轮成功，但不构成 Stage 3 acceptance。
 - 跨仓库适配跟踪：producer `David-JA/single-crystal-stress#44`，用于记录本仓库 generic helper/config 变化对 single-crystal 现有使用方式的影响，并在本 PR 收尾后完成 producer-side readback。
 - Producer-side readback：已使用 producer 当前 `scripts/tools/check_stage_gate_readiness.py` 对历史 tracked handoff 做 v1.0 relay-export readback，exit code `0`；证据与迁移命令已记录在 Issue #44 comment `5045654662`。当前 producer checkout 无 active handoff，Issue 保持 open，等待未来 live handoff 与 companion PR closeout。
 - 关联 PR：本 spec 与全部 stage 改动进入同一个 PR（Stage 1 段 2 创建）。**Stage 3 完成且 README/contract 重新对齐前，PR 必须保持 Draft 状态，禁止 merge。**
@@ -48,18 +49,19 @@ Stage 3 的完整评审回传采用“结构化 turn 提取 + relay completion A
 
 - `jobId` / envelope identity 只负责把 relay transport、native host 和本次 `request_review` 关联起来；它不直接等同于 ChatGPT DOM 中的消息 identity。
 - extension 在 dispatch 前记录当前会话已有的 turn identity 集合或最后一个稳定 turn anchor；dispatch 后只收集新增或发生变化的 turn，不以“当前页面最新 assistant bubble”作为唯一依据。
-- turn identity 优先来自稳定的 DOM 属性（例如 `data-turn-id`、`data-message-id`、`data-testid` 或 `id`），并保留 `user`、`assistant`、`tool` 等角色的文档顺序。若网页重渲染导致节点替换，只要 identity 不变，就继续合并该 turn 的新内容。
+- turn identity 优先来自 outer turn shell 的稳定 DOM 属性（例如 `data-turn-id`、turn-level `data-testid` 或 `id`）；`data-message-id` 只作为 turn 内 fragment identity，只有完全不存在 outer shell 时才可作为受限 fallback。解析器保留 `user`、`assistant`、`tool` 等角色的文档顺序；目标 turn 之后出现未 hydration 的 unknown shell时必须等待或 fail closed，不得跨越它收集后续 assistant。若网页重渲染导致节点替换，只要 identity 不变，就继续合并该 turn 的新内容。
 - capture 层必须支持多次轮询的增量 harvest：按 turn identity 去重、按文档顺序重组，并在延迟 hydration、DOM 重渲染或虚拟化场景下补采未完成的 turn；不能因为某一次轮询暂时只看到部分节点就 terminalize。
 - 本次 review 的正式 `assistant_output` 是 dispatch 后新增 assistant review turn（或该 review 产生的连续 assistant turn 集合）的完整文本。capture 层必须保存本次 job 的 turn anchor，避免把历史 assistant 回复或其他并发内容混入结果。
 - `TURN_IDLE` 只在目标 turn 已经出现明确的 turn-level completion evidence、内容在连续轮询中保持稳定，并且 native host 对该 job 返回成功 ACK 后成立。普通文本静默、单独消失的 stop button、代码块的 `Copy code` 按钮或“曾经观察到 generating”均不是充分完成证据。
 - `assistant_output_sha256` 是完整性、去重和 reconnect/retry 审计字段，不负责判断 turn 属于哪一轮，也不要求把 hash 设计成独立的 completion 状态机。若输出尚未完成，hash 只能描述当前快照，不能作为 formal verdict evidence。
 - 如果 lifecycle ACK 返回 `{ok:false}`，extension 必须继续保持可恢复监控或显式进入 recovery；不得把失败响应当作成功并停止 observer。native host 未 ACK 前不得将本次 capture 视为已交付。
+- relay-only 的 dispatch、reconcile、trigger acceptance 与全部 lifecycle 事件必须携带同一持久化 `ownershipGeneration`。content、background、native 三层均须精确校验并原样转发；任何一层不得把旧 monitor 的 generation 改写为当前值。所有可幂等 lifecycle 在 native 已持久化但 ACK 丢失时必须重放至 correlated ACK，native 对同 phase 重放返回当前稳定 phase。
 
 #### SyncNos reference 审计后的 parser baseline
 
 仓库内 `SyncNos-Webclipper` reference 已提供可验证的设计，不应再把参考范围缩减为“长文本分块”：
 
-- `chatgpt-collector.ts` 的 `turnKeyOf()` 优先使用 enclosing `data-turn-id`，再回退到 `data-message-id`、`data-testid`、DOM `id`；这是 turn identity，不是正文 hash。
+- `chatgpt-collector.ts` 的 `turnKeyOf()` 证明可使用页面 identity 拆分轮次；relay 结合自身需求进一步把 outer turn shell identity 与 inner `data-message-id` 分层。这些 identity 不是正文 hash。
 - `getTurnSkeleton()` 保存 conversation-turn skeleton 的文档顺序；`getTurnWrappers()` 优先枚举 message-level role nodes，同时保留没有 role node 的 turn shell。
 - `harvestMessagesInto()` 以 `(turnKey, message identity / within-turn position)` 跨 pass 去重并保留同一 turn 内的多个 message；`assembleFromCache()` 再按当前 skeleton 顺序重组。
 - `harvestInto()` 与 manual scroll/hydration 流程允许 virtualized shell 在后续 pass hydrate 后补采，避免单次 DOM 快照遗漏历史或尚未 hydration 的内容。

@@ -23,10 +23,11 @@
     return response;
   }
   async function sendLifecycleUntilAck(type, job, errorCode = null, assistantOutput = null) {
+    const ackDeadline = Math.max(job.deadline, Date.now() + 30_000);
     while (true) {
       try { return await sendLifecycle(type, job, errorCode, assistantOutput); }
       catch (error) {
-        if (Date.now() >= job.deadline) throw error;
+        if (Date.now() >= ackDeadline) throw error;
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
     }
@@ -77,7 +78,7 @@
             if (observedUser) {
               if (observedUserRecord) userRecord = observedUserRecord; else userNode = observedUser;
               diagnostic("info", "user_turn_observed", job);
-              await sendLifecycle("USER_TURN_ACKED", job);
+            await sendLifecycleUntilAck("USER_TURN_ACKED", job);
               userAcked = true;
             }
           }
@@ -99,7 +100,7 @@
           if (observedAssistant && observedAssistantRecords.length === 0) assistantNode = observedAssistant;
           if (userAcked && !assistantStarted && observedAssistant) {
             diagnostic("info", "assistant_turn_observed", job, {count: assistantRecords.length || assistantNodes.length || 1});
-            await sendLifecycle("ASSISTANT_STARTED", job);
+            await sendLifecycleUntilAck("ASSISTANT_STARTED", job);
             assistantStarted = true;
             assistantStartedAt = Date.now();
           }
@@ -128,7 +129,7 @@
             if (quiet && stable && completionObserved && !idleSendPending && now >= nextIdleAttemptAt) {
               idleSendPending = true;
               try {
-                await sendLifecycle("TURN_IDLE", job, null, candidateOutput);
+                await sendLifecycleUntilAck("TURN_IDLE", job, null, candidateOutput);
                 finish();
               } catch (error) {
                 idleSendPending = false;
@@ -143,7 +144,7 @@
         if (Date.now() < job.deadline) {
           setTimeout(() => { void inspect(); }, 250);
         } else {
-          try { await sendLifecycle(userAcked ? "TURN_TIMEOUT" : "SEND_UNCERTAIN", job, error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_MONITOR_ERROR"); } catch {}
+          try { await sendLifecycleUntilAck(userAcked ? "TURN_TIMEOUT" : "SEND_UNCERTAIN", job, error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_MONITOR_ERROR"); } catch {}
           finish();
         }
       }
@@ -156,7 +157,7 @@
     observer.observe(document.documentElement, {childList: true, subtree: true, characterData: true});
     const timer = setInterval(() => {
       if (Date.now() < job.deadline || settled) return;
-      void sendLifecycle(userAcked ? "TURN_TIMEOUT" : "SEND_UNCERTAIN", job).finally(finish);
+      void sendLifecycleUntilAck(userAcked ? "TURN_TIMEOUT" : "SEND_UNCERTAIN", job).finally(finish);
     }, 250);
     const pollTimer = setInterval(() => { void inspect(); }, 250);
     void inspect();
@@ -189,6 +190,8 @@
           byte_length: new TextEncoder().encode(candidate.canonical).length,
           sha256: await sha256Hex(candidate.canonical),
           classification: candidate.classification,
+          content_observed: candidate.contentObserved,
+          fragment_extracted: candidate.fragmentExtracted,
         });
       }
       diagnostic("error", "dispatch_receipt_missing", {jobId: message.jobId, bindingGeneration: message.bindingGeneration}, {...summary, error_code: error instanceof Error ? error.message.split(":", 1)[0] : "DISPATCH_FAILED"});
@@ -202,8 +205,8 @@
       : adapter.reconcile(document, message.envelope);
     if (observed.state === "user-present") {
       const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration};
-      await sendLifecycle("USER_TURN_ACKED", job);
-      if (observed.assistantRecords?.length > 0 || observed.assistants?.length > 0 || observed.assistant) await sendLifecycle("ASSISTANT_STARTED", job);
+      await sendLifecycleUntilAck("USER_TURN_ACKED", job);
+      if (observed.assistantRecords?.length > 0 || observed.assistants?.length > 0 || observed.assistant) await sendLifecycleUntilAck("ASSISTANT_STARTED", job);
       monitor(message, observed, true, Boolean(observed.assistantRecords?.length > 0 || observed.assistants?.length > 0 || observed.assistant));
       return;
     }
@@ -213,7 +216,7 @@
         : await adapter.resumeDraft(document, message.envelope));
       return;
     }
-    await sendLifecycle("RECONCILE_MISMATCH", {
+    await sendLifecycleUntilAck("RECONCILE_MISMATCH", {
       jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration,
     });
     active = null;
@@ -226,7 +229,7 @@
     active = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration, starting: true};
     void operation(message).catch(async (error) => {
       const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration};
-      try { await sendLifecycle("SEND_UNCERTAIN", job, error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_TRIGGER_FAILED"); } catch {}
+      try { await sendLifecycleUntilAck("SEND_UNCERTAIN", job, error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_TRIGGER_FAILED"); } catch {}
       if (active?.jobId === message.jobId) active = null;
     });
   }

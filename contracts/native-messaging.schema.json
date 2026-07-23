@@ -73,10 +73,12 @@
         "turn_key_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "fragment_key_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "classification": {"enum": ["baseline", "new"]},
-        "role": {"enum": ["user", "assistant"]},
+        "role": {"enum": ["user", "assistant", "unknown"]},
         "turn_index": {"type": "integer", "minimum": 0},
         "fragment_index": {"type": "integer", "minimum": 0},
         "fragment_count": {"type": "integer", "minimum": 0},
+        "content_observed": {"type": "boolean"},
+        "fragment_extracted": {"type": "boolean"},
         "byte_length": {"type": "integer", "minimum": 0},
         "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "generating": {"type": "boolean"},
@@ -89,8 +91,30 @@
   },
   "allOf": [
     {
-      "if": {"properties": {"type": {"const": "DIAGNOSTIC_ACK"}}, "required": ["type"]},
-      "then": {"required": ["responseToRequestId", "persisted", "disposition"]}
+      "if": {
+        "properties": {
+          "type": {"const": "DIAGNOSTIC_ACK"},
+          "schemaVersion": {"properties": {"minor": {"minimum": 3}}, "required": ["minor"]}
+        },
+        "required": ["type", "schemaVersion"]
+      },
+      "then": {
+        "required": ["responseToRequestId", "persisted", "disposition"],
+        "oneOf": [
+          {"properties": {"persisted": {"const": true}, "disposition": {"enum": ["appended", "duplicate"]}}},
+          {"properties": {"persisted": {"const": false}, "disposition": {"const": "filtered"}}}
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {"enum": ["USER_TURN_ACKED", "ASSISTANT_STARTED", "TURN_IDLE", "TURN_TIMEOUT", "RECONCILE_MISMATCH", "SESSION_LOST", "SEND_UNCERTAIN", "DISPATCH_TRIGGER_ACCEPTED", "RECONCILE_TRIGGER_ACCEPTED"]},
+          "schemaVersion": {"properties": {"minor": {"minimum": 3}}, "required": ["minor"]}
+        },
+        "required": ["type", "schemaVersion"]
+      },
+      "then": {"required": ["ownershipGeneration"]}
     }
   ]
 }

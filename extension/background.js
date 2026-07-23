@@ -101,7 +101,7 @@ async function onNativeMessage(message) {
       ownershipGeneration: message.ownershipGeneration,
     });
     if (!response?.ok) throw new Error(response?.errorCode ?? "CONTENT_DISPATCH_REJECTED");
-    ensurePort().postMessage({schemaVersion: SCHEMA_VERSION, type: `${message.type}_ACCEPTED`, responseToRequestId: message.requestId, sessionId: armed.sessionId, jobId: message.jobId});
+    ensurePort().postMessage({schemaVersion: SCHEMA_VERSION, type: `${message.type}_ACCEPTED`, responseToRequestId: message.requestId, sessionId: armed.sessionId, jobId: message.jobId, ownershipGeneration: message.ownershipGeneration});
     diagnostic("info", "trigger_accepted", {job_id: message.jobId, message_type: message.type});
   } catch (error) {
     const errorCode = error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_DISPATCH_ERROR";
@@ -110,20 +110,20 @@ async function onNativeMessage(message) {
     await sendLifecycle("SEND_UNCERTAIN", message.jobId, errorCode);
   }
 }
-async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = null) {
+async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = null, ownershipGeneration = armed?.ownershipGeneration) {
   if (!armed) throw new Error("SESSION_NOT_ARMED");
   const current = armed;
   if (type === "SESSION_LOST") {
     current.state = "INVALIDATING";
     try {
-      await nativeRequest(type, {sessionId: current.sessionId, jobId, ownershipGeneration: current.ownershipGeneration, ...(errorCode ? {errorCode} : {})});
+      await nativeRequest(type, {sessionId: current.sessionId, jobId, ownershipGeneration, ...(errorCode ? {errorCode} : {})});
     } finally {
       await releaseBinding(current);
     }
     return;
   }
   diagnostic("info", "lifecycle_send", {job_id: jobId, message_type: type, ...(errorCode ? {error_code: errorCode} : {}), ...(assistantOutput !== null ? {length: assistantOutput.length} : {})});
-  const response = await nativeRequest(type, {sessionId: current.sessionId, jobId, ownershipGeneration: current.ownershipGeneration, ...(errorCode ? {errorCode} : {}), ...(assistantOutput !== null ? {assistantOutput} : {})});
+  const response = await nativeRequest(type, {sessionId: current.sessionId, jobId, ownershipGeneration, ...(errorCode ? {errorCode} : {}), ...(assistantOutput !== null ? {assistantOutput} : {})});
   diagnostic("info", "lifecycle_acked", {job_id: jobId, message_type: type});
   if (["TURN_IDLE", "SEND_UNCERTAIN", "BLOCKED", "MISMATCH", "TIMEOUT"].includes(response?.phase) && armed?.sessionId === current.sessionId) {
     armed.activeJobId = null;
@@ -278,8 +278,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (sender?.tab?.id !== armed.tabId) { respond({ok: false, errorCode: "LIFECYCLE_SENDER_TAB_MISMATCH"}); return; }
     if (armed.activeJobId !== message.jobId) { respond({ok: false, errorCode: "LIFECYCLE_JOB_MISMATCH"}); return; }
     if (message.bindingGeneration !== armed.bindingGeneration || message.documentId !== armed.documentId) { respond({ok: false, errorCode: "LIFECYCLE_BINDING_MISMATCH"}); return; }
+    if (!Number.isSafeInteger(message.ownershipGeneration) || message.ownershipGeneration !== armed.ownershipGeneration) { respond({ok: false, errorCode: "LIFECYCLE_OWNERSHIP_MISMATCH"}); return; }
     diagnostic("info", "lifecycle_received", {job_id: message.jobId, message_type: message.type});
-    sendLifecycle(message.type, message.jobId, message.errorCode, message.assistantOutput)
+    sendLifecycle(message.type, message.jobId, message.errorCode, message.assistantOutput, message.ownershipGeneration)
       .then(() => respond({ok: true}), (error) => respond({ok: false, errorCode: error.message}));
     return true;
   }

@@ -124,12 +124,12 @@ test("extension waits for lifecycle ACK, acknowledges dispatch receipt and recov
 
   await firstPort.onMessage.emit({
     schemaVersion: {major: 1, minor: 0}, type: "DISPATCH_TRIGGER", requestId: "dispatch-1",
-    sessionId: armRequest.sessionId, jobId: "job-1", envelope: "Path: x", deadline: new Date(Date.now() + 10_000).toISOString(),
+    sessionId: armRequest.sessionId, jobId: "job-1", envelope: "Path: x", ownershipGeneration: 1, deadline: new Date(Date.now() + 10_000).toISOString(),
   });
   assert.ok(firstPort.messages.some((message) => message.type === "DISPATCH_TRIGGER_ACCEPTED" && message.responseToRequestId === "dispatch-1"));
 
   let lifecycleSettled = false;
-  const lifecycle = h.runtime({kind: "LIFECYCLE", type: "TURN_IDLE", jobId: "job-1", assistantOutput: "formal verdict output"}).then((value) => { lifecycleSettled = true; return value; });
+  const lifecycle = h.runtime({kind: "LIFECYCLE", type: "TURN_IDLE", jobId: "job-1", ownershipGeneration: 1, assistantOutput: "formal verdict output"}).then((value) => { lifecycleSettled = true; return value; });
   await waitFor(() => firstPort.messages.some((message) => message.type === "TURN_IDLE"));
   assert.equal(lifecycleSettled, false);
   const idleRequest = firstPort.messages.find((message) => message.type === "TURN_IDLE");
@@ -279,13 +279,33 @@ test("terminal reconcile mismatch releases the background active job", async () 
     sessionId: armRequest.sessionId, jobId: "job-missing", envelope: "Path: x",
     ownershipGeneration: 2, deadline: new Date(Date.now() + 10_000).toISOString(),
   });
-  const lifecycle = h.runtime({kind: "LIFECYCLE", type: "RECONCILE_MISMATCH", jobId: "job-missing"});
+  const lifecycle = h.runtime({kind: "LIFECYCLE", type: "RECONCILE_MISMATCH", jobId: "job-missing", ownershipGeneration: 2});
   await waitFor(() => nativePort.messages.some((message) => message.type === "RECONCILE_MISMATCH"));
   const mismatch = nativePort.messages.find((message) => message.type === "RECONCILE_MISMATCH");
   assert.equal(mismatch.ownershipGeneration, 2);
   h.respondTo(nativePort, mismatch, "EVENT_ACK", {jobId: "job-missing", phase: "MISMATCH"});
   assert.equal((await lifecycle).ok, true);
   assert.equal((await h.runtime({kind: "POPUP_STATUS"})).state.activeJobId, null);
+});
+
+test("background rejects a stale content ownership generation without rewriting it", async () => {
+  const h = harness();
+  const armResult = h.runtime({kind: "POPUP_ARM"});
+  await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
+  const nativePort = h.ports[0];
+  const armRequest = nativePort.messages.find((message) => message.type === "ARM_SESSION");
+  h.respondTo(nativePort, armRequest, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
+  await armResult;
+  await nativePort.onMessage.emit({
+    schemaVersion: {major: 1, minor: 3}, type: "RECONCILE_TRIGGER", requestId: "reconcile-generation",
+    sessionId: armRequest.sessionId, jobId: "job-generation", envelope: "Path: x",
+    ownershipGeneration: 2, deadline: new Date(Date.now() + 10_000).toISOString(),
+  });
+  const before = nativePort.messages.length;
+  const stale = await h.runtime({kind: "LIFECYCLE", type: "TURN_TIMEOUT", jobId: "job-generation", ownershipGeneration: 1});
+  assert.equal(stale.ok, false);
+  assert.equal(stale.errorCode, "LIFECYCLE_OWNERSHIP_MISMATCH");
+  assert.equal(nativePort.messages.length, before);
 });
 
 test("diagnostic queue is retained for a correlated ACK without persisted evidence", async () => {

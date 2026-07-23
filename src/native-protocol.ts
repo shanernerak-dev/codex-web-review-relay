@@ -39,6 +39,7 @@ export class NativeBridge {
     expectedType: string;
     sessionId: string;
     jobId: string;
+    ownershipGeneration: number;
     resolve: () => void;
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
@@ -97,6 +98,9 @@ export class NativeBridge {
       if (pending.expectedType !== type || pending.sessionId !== requireText(message, "sessionId") || pending.jobId !== requireText(message, "jobId")) {
         throw new Error("NATIVE_OUTBOUND_ACK_MISMATCH");
       }
+      if (!Number.isSafeInteger(message.ownershipGeneration) || message.ownershipGeneration !== pending.ownershipGeneration) {
+        throw new Error("JOB_OWNERSHIP_STALE");
+      }
       clearTimeout(pending.timer);
       this.pendingOutbound.delete(responseTo);
       this.acknowledgedOutbound.add(responseTo);
@@ -132,7 +136,10 @@ export class NativeBridge {
     const sessionId = requireText(message, "sessionId");
     const jobId = requireText(message, "jobId");
     const currentJob = this.coordinator.store.getJob(jobId);
+    let relayOnlyJob = false;
+    try { relayOnlyJob = JSON.parse(currentJob.relay_json ?? "{}").target_kind === "commit"; } catch {}
     const ownershipGeneration = Number.isSafeInteger(message.ownershipGeneration) ? message.ownershipGeneration as number : null;
+    if (relayOnlyJob && peerVersion.minor >= 3 && ownershipGeneration === null) throw new Error("NATIVE_MESSAGE_INVALID:ownershipGeneration");
     if (ownershipGeneration !== null && ownershipGeneration !== currentJob.ownership_generation) {
       throw new Error("JOB_OWNERSHIP_STALE");
     }
@@ -143,6 +150,7 @@ export class NativeBridge {
       if ((!active || active.session_id !== sessionId) && !ownedExpired) throw new Error("SESSION_NOT_ARMED");
     } else {
       this.requireSession(sessionId);
+      if (relayOnlyJob && peerVersion.minor >= 3 && currentJob.session_id !== sessionId) throw new Error("JOB_OWNERSHIP_STALE");
     }
     const phaseByType = {
       USER_TURN_ACKED: "USER_TURN_ACKED",
@@ -256,6 +264,7 @@ export class NativeBridge {
         expectedType,
         sessionId: requireText(message, "sessionId"),
         jobId: requireText(message, "jobId"),
+        ownershipGeneration: Number.isSafeInteger(message.ownershipGeneration) ? message.ownershipGeneration as number : -1,
         resolve,
         reject,
         timer,
@@ -284,6 +293,7 @@ export class NativeBridge {
 
   private requireReviewModeCapability(session: StoredSession, reviewMode: "pr-comment" | "relay-only"): void {
     if (reviewMode !== "relay-only") return;
+    if (session.schema_minor < 3) throw new Error("RELAY_ONLY_EXTENSION_UNSUPPORTED");
     let capabilities: unknown;
     try { capabilities = JSON.parse(session.capabilities_json); }
     catch { capabilities = null; }

@@ -33,9 +33,10 @@ function fixture() {
 }
 
 function lifecycle(bridge: NativeBridge, type: string, jobId: string, assistantOutput?: string): void {
+  const job = bridge.coordinator.store.getJob(jobId);
   bridge.handleInbound({
     schemaVersion: NATIVE_SCHEMA_VERSION, type, requestId: `event-${type}`,
-    sessionId: "session-1", jobId,
+    sessionId: "session-1", jobId, ownershipGeneration: job.ownership_generation,
     ...(assistantOutput !== undefined ? {assistantOutput} : {}),
   });
 }
@@ -47,6 +48,7 @@ function acceptOutbound(bridge: NativeBridge, message: Record<string, unknown>):
     responseToRequestId: message.requestId,
     sessionId: message.sessionId,
     jobId: message.jobId,
+    ownershipGeneration: message.ownershipGeneration,
   });
 }
 
