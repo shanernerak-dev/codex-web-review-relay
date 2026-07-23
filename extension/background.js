@@ -176,6 +176,7 @@ async function arm() {
     const state = await chrome.tabs.sendMessage(tab.id, {kind: "GET_PAGE_STATE"});
     if (!state?.ok || !state.adapterReady) throw new Error(state?.errorCode ?? "PAGE_ADAPTER_NOT_READY");
     if (typeof state.conversationIdentity !== "string") throw new Error("PAGE_IDENTITY_UNSUPPORTED");
+    if (typeof state.documentId !== "string" || state.documentId.length === 0) throw new Error("PAGE_DOCUMENT_ID_UNSUPPORTED");
     const sessionId = uuid();
     reconnectDisabled = false;
     const result = await nativeRequest("ARM_SESSION", {sessionId, extensionVersion: EXTENSION_VERSION, capabilities: CAPABILITIES});

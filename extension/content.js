@@ -130,10 +130,7 @@
     void inspect();
   }
 
-  async function startDispatch(message) {
-    if (active) throw new Error("CONTENT_JOB_ALREADY_ACTIVE");
-    requireLiveDeadline(message);
-    adapter.pageSupported(location);
+  async function runDispatch(message) {
     diagnostic("info", "dispatch_started", {jobId: message.jobId, bindingGeneration: message.bindingGeneration});
     try {
       const state = await adapter.dispatch(document, message.envelope);
@@ -148,10 +145,7 @@
     }
   }
 
-  async function startReconcile(message) {
-    if (active) throw new Error("CONTENT_JOB_ALREADY_ACTIVE");
-    requireLiveDeadline(message);
-    adapter.pageSupported(location);
+  async function runReconcile(message) {
     const observed = adapter.reconcile(document, message.envelope);
     if (observed.state === "user-present") {
       const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration};
@@ -164,14 +158,29 @@
       monitor(message, await adapter.resumeDraft(document, message.envelope));
       return;
     }
-    await sendLifecycle("RECONCILE_MISMATCH", {jobId: message.jobId});
+    await sendLifecycle("RECONCILE_MISMATCH", {
+      jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration,
+    });
+    active = null;
+  }
+
+  function acceptTrigger(message, operation) {
+    if (active) throw new Error("CONTENT_JOB_ALREADY_ACTIVE");
+    requireLiveDeadline(message);
+    adapter.pageSupported(location);
+    active = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration, starting: true};
+    void operation(message).catch(async (error) => {
+      const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration};
+      try { await sendLifecycle("SEND_UNCERTAIN", job, error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_TRIGGER_FAILED"); } catch {}
+      if (active?.jobId === message.jobId) active = null;
+    });
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     try {
       if (message.kind === "GET_PAGE_STATE") { adapter.pageSupported(location); respond({ok: true, adapterReady: true, conversationIdentity: `${location.origin}${location.pathname}`, documentId: DOCUMENT_ID}); }
-      else if (message.kind === "DISPATCH_TRIGGER") { startDispatch(message).then(() => respond({ok: true}), (error) => respond({ok: false, errorCode: error.message.split(":", 1)[0]})); return true; }
-      else if (message.kind === "RECONCILE_TRIGGER") { startReconcile(message).then(() => respond({ok: true}), (error) => respond({ok: false, errorCode: error.message.split(":", 1)[0]})); return true; }
+      else if (message.kind === "DISPATCH_TRIGGER") { acceptTrigger(message, runDispatch); respond({ok: true}); }
+      else if (message.kind === "RECONCILE_TRIGGER") { acceptTrigger(message, runReconcile); respond({ok: true}); }
       else respond({ok: false, errorCode: "CONTENT_MESSAGE_UNSUPPORTED"});
     } catch (error) { respond({ok: false, errorCode: error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_ERROR"}); }
   });

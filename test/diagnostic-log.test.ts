@@ -44,3 +44,12 @@ test("diagnostic log rejects nested values and never throws on filesystem failur
   assert.deepEqual(logger.query("job-a").events, []);
   rmSync(root, {recursive: true, force: true});
 });
+
+test("diagnostic query deduplicates event IDs across native restarts", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-diagnostics-"));
+  const path = join(root, "events.jsonl");
+  new DiagnosticLogger(path, "info", 65_536, 2).write("info", "extension-content", "user_turn_observed", {job_id: "job-a", event_id: "event-1"});
+  new DiagnosticLogger(path, "info", 65_536, 2).write("info", "extension-content", "user_turn_observed", {job_id: "job-a", event_id: "event-1"});
+  assert.equal(new DiagnosticLogger(path, "info", 65_536, 2).query("job-a").events.length, 1);
+  rmSync(root, {recursive: true, force: true});
+});

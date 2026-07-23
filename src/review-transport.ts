@@ -202,7 +202,7 @@ export class ReviewTransportService {
       });
       const accepted = this.bridge.expectOutboundAck(dispatch);
       try {
-        this.bridge.markDispatchWritten(current.job_id);
+        this.bridge.markDispatchWritten(current.job_id, session.session_id);
         this.writeDispatch(dispatch);
         await accepted;
         this.ownedJobs.add(current.job_id);

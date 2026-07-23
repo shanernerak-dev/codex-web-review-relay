@@ -53,6 +53,7 @@
     "bindingGeneration": {"type": "string", "minLength": 1, "maxLength": 160},
     "documentId": {"type": "string", "minLength": 1, "maxLength": 160},
     "tabId": {"type": "integer", "minimum": 0},
+    "persisted": {"type": "boolean"},
     "details": {
       "type": "object",
       "additionalProperties": false,

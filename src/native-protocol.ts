@@ -68,7 +68,7 @@ export class NativeBridge {
       const event = requireText(message, "event");
       const details = message.details !== null && typeof message.details === "object" && !Array.isArray(message.details)
         ? message.details as NativeRecord : {};
-      this.diagnostics?.write(level, component, event, {
+      const persisted = this.diagnostics?.write(level, component, event, {
         ...details,
         session_id: typeof message.sessionId === "string" ? message.sessionId : undefined,
         job_id: typeof message.jobId === "string" ? message.jobId : undefined,
@@ -79,11 +79,13 @@ export class NativeBridge {
         binding_generation: message.bindingGeneration,
         document_id: message.documentId,
         tab_id: message.tabId,
-      });
+      }) ?? false;
+      if (!persisted) throw new Error("DIAGNOSTIC_PERSIST_FAILED");
       return {
         schemaVersion: NATIVE_SCHEMA_VERSION,
         type: "DIAGNOSTIC_ACK",
         responseToRequestId: requestId,
+        persisted: true,
       };
     }
     if (type === "DISPATCH_TRIGGER_ACCEPTED" || type === "RECONCILE_TRIGGER_ACCEPTED") {
@@ -127,8 +129,15 @@ export class NativeBridge {
     }
 
     const sessionId = requireText(message, "sessionId");
-    const session = this.requireSession(sessionId);
     const jobId = requireText(message, "jobId");
+    const currentJob = this.coordinator.store.getJob(jobId);
+    if (type === "SESSION_LOST") {
+      const active = this.coordinator.store.getActiveSession();
+      const ownedExpired = currentJob.session_id === sessionId;
+      if ((!active || active.session_id !== sessionId) && !ownedExpired) throw new Error("SESSION_NOT_ARMED");
+    } else {
+      this.requireSession(sessionId);
+    }
     const phaseByType = {
       USER_TURN_ACKED: "USER_TURN_ACKED",
       ASSISTANT_STARTED: "ASSISTANT_STARTED",
@@ -191,7 +200,8 @@ export class NativeBridge {
     };
   }
 
-  markDispatchWritten(jobId: string): void {
+  markDispatchWritten(jobId: string, sessionId?: string): void {
+    if (sessionId) this.coordinator.store.bindJobSession(jobId, sessionId);
     this.coordinator.transition(jobId, "DISPATCHED");
   }
 
@@ -222,7 +232,7 @@ export class NativeBridge {
     };
   }
 
-  expectOutboundAck(message: NativeRecord, timeoutMs = 5_000): Promise<void> {
+  expectOutboundAck(message: NativeRecord, timeoutMs = 30_000): Promise<void> {
     const requestId = requireText(message, "requestId");
     const type = requireText(message, "type");
     const expectedType = `${type}_ACCEPTED`;

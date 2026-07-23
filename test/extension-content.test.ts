@@ -34,8 +34,8 @@ function harness(ackDelayMs = 0) {
   }
   const adapter = {
     pageSupported: () => true,
-    dispatch: () => { calls.dispatch += 1; return {baseline: new Set()}; },
-    resumeDraft: () => { calls.resumeDraft += 1; return {baseline: new Set()}; },
+    dispatch: () => { calls.dispatch += 1; return {baseline: new Set(), user: {}}; },
+    resumeDraft: () => { calls.resumeDraft += 1; return {baseline: new Set(), user: {}}; },
     reconcile: () => user
       ? {state: "user-present", user: {}, assistant: assistant ? {innerText: assistantOutputs.at(-1)} : null, assistants: assistant ? assistantOutputs.map((innerText) => ({innerText})) : [], baseline: new Set()}
       : {state: "missing", baseline: new Set()},
@@ -81,7 +81,7 @@ function harness(ackDelayMs = 0) {
   context.globalThis = context;
   vm.runInContext(readFileSync(resolve("extension/content.js"), "utf8"), context, {filename: "content.js"});
 
-  function dispatch(deadlineMs = 10_000, reviewMode = "pr-comment") {
+  function dispatchRaw(deadlineMs = 10_000, reviewMode = "pr-comment") {
     const response = new Promise<any>((resolveResponse) => {
       runtimeListeners[0]({
         kind: "DISPATCH_TRIGGER",
@@ -91,6 +91,11 @@ function harness(ackDelayMs = 0) {
         deadline: new Date(Date.now() + deadlineMs).toISOString(),
       }, {}, resolveResponse);
     });
+    return response;
+  }
+  async function dispatch(deadlineMs = 10_000, reviewMode = "pr-comment") {
+    const response = await dispatchRaw(deadlineMs, reviewMode);
+    if (response?.ok && deadlineMs > 0) await waitFor(() => lifecycleMessages.some((entry) => entry.type === "USER_TURN_ACKED" || entry.type === "SEND_UNCERTAIN"));
     return response;
   }
 
@@ -105,6 +110,7 @@ function harness(ackDelayMs = 0) {
     lifecycleMessages,
     calls,
     dispatch,
+    dispatchRaw,
     reconcile,
     mutate() { observerCallback?.(); },
     setUser(value: boolean) { user = value; },
@@ -158,6 +164,14 @@ test("content monitor waits for the complete stable output after a partial bubbl
   h.mutate();
   await waitFor(() => h.events.includes("TURN_IDLE"), 5_500);
   assert.equal(h.lifecycleMessages.find((entry) => entry.type === "TURN_IDLE")?.assistantOutput, "Stage C Runtime Follow-up Round complete");
+});
+
+test("content accepts a dispatch trigger before waiting for user-turn receipt", async () => {
+  const h = harness(100);
+  const started = Date.now();
+  const accepted = await h.dispatchRaw(9_000, "relay-only");
+  assert.equal(accepted.ok, true);
+  assert.ok(Date.now() - started < 75);
 });
 
 test("relay-only monitor waits for a long response without requiring composer idle identity", async () => {
@@ -287,6 +301,7 @@ test("content monitor keeps observing after a rejected USER_TURN_ACKED", async (
   const h = harness();
   h.failNextUserTurnAcks(1);
   assert.equal((await h.dispatch(9_000, "relay-only")).ok, true);
+  await waitFor(() => h.lifecycleMessages.filter((entry) => entry.type === "USER_TURN_ACKED").length >= 2);
   assert.ok(h.lifecycleMessages.filter((entry) => entry.type === "USER_TURN_ACKED").length >= 2);
 });
 

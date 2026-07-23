@@ -90,7 +90,15 @@ export class DiagnosticLogger {
       const time = String(a.source_timestamp ?? a.timestamp).localeCompare(String(b.source_timestamp ?? b.timestamp));
       return time || Number(a.sequence ?? 0) - Number(b.sequence ?? 0);
     });
-    return {log_path: this.path, events: events.slice(-bounded), truncated: events.length > bounded, log_error: this.lastError};
+    const unique = [];
+    const seen = new Set<string>();
+    for (const event of events) {
+      const eventId = typeof event.event_id === "string" ? event.event_id : null;
+      if (eventId && seen.has(eventId)) continue;
+      if (eventId) seen.add(eventId);
+      unique.push(event);
+    }
+    return {log_path: this.path, events: unique.slice(-bounded), truncated: unique.length > bounded, log_error: this.lastError};
   }
 
   private readMatching(path: string, jobId: string, output: DiagnosticEvent[]): void {

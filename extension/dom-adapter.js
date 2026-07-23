@@ -197,7 +197,7 @@
   async function clickAndConfirm(document, state, envelope) {
     const button = await waitFor(document, () => sendButton(document), "SEND_BUTTON_ENABLE_TIMEOUT");
     button.click();
-    const user = await waitFor(document, () => newTurn(document, state.baseline, "user", envelope), "SEND_CLICK_RECEIPT_MISSING", 10_000);
+    const user = await waitFor(document, () => newTurn(document, state.baseline, "user", envelope), "SEND_CLICK_RECEIPT_MISSING", 60_000);
     return {...state, button, user};
   }
   async function dispatch(document, envelope) {

@@ -212,6 +212,13 @@ export class JobStore extends EventEmitter {
     return job;
   }
 
+  bindJobSession(jobId: string, sessionId: string): StoredJob {
+    const result = this.db.prepare("UPDATE jobs SET session_id = ?, updated_at = ? WHERE job_id = ?")
+      .run(sessionId, new Date().toISOString(), jobId);
+    if (result.changes !== 1) throw new Error("JOB_NOT_FOUND");
+    return this.getJob(jobId);
+  }
+
   claimRecoverySend(jobId: string): boolean {
     const result = this.db.prepare(`
       UPDATE jobs SET recovery_send_used = 1, updated_at = ?
@@ -311,6 +318,10 @@ export class JobStore extends EventEmitter {
     const session = this.db.prepare("SELECT * FROM active_session WHERE singleton = 1").get() as StoredSession | undefined;
     if (!session || Date.parse(session.lease_expires_at) <= now.getTime()) return null;
     return session;
+  }
+
+  getSessionRegardlessLease(sessionId: string): StoredSession | null {
+    return (this.db.prepare("SELECT * FROM active_session WHERE singleton = 1 AND session_id = ?").get(sessionId) as StoredSession | undefined) ?? null;
   }
 
   disarmSession(sessionId: string): void {

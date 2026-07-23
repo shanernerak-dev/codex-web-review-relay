@@ -91,6 +91,41 @@ test("diagnostic filesystem failure cannot block TURN_IDLE persistence or ACK", 
   rmSync(root, {recursive: true, force: true});
 });
 
+test("expired owning session can submit one SESSION_LOST abandonment", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-expired-loss-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const coordinator = new JobCoordinator(store);
+  const bridge = new NativeBridge(coordinator);
+  const relay = relayFixture();
+  const fingerprint = relayFingerprint(relay);
+  const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+  store.armSession({sessionId: "expired-owner", extensionVersion: "0.2.6", schemaMajor: 1, schemaMinor: 2, leaseMs: 1, now: new Date(0)});
+  store.bindJobSession(job.job_id, "expired-owner");
+  coordinator.transition(job.job_id, "DISPATCHED");
+  const ack = bridge.handleInbound({
+    schemaVersion: NATIVE_SCHEMA_VERSION, type: "SESSION_LOST", requestId: "lost",
+    sessionId: "expired-owner", jobId: job.job_id, errorCode: "PAGE_CLOSED",
+  });
+  assert.equal(ack?.phase, "SESSION_LOST");
+  store.close();
+  rmSync(root, {recursive: true, force: true});
+});
+
+test("diagnostic ACK is withheld when persistence fails", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-diagnostic-ack-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const logger = new DiagnosticLogger(root, "info", 65_536, 2);
+  const bridge = new NativeBridge(new JobCoordinator(store), 30_000, logger);
+  assert.throws(() => bridge.handleInbound({
+    schemaVersion: NATIVE_SCHEMA_VERSION, type: "DIAGNOSTIC_EVENT", requestId: "diag",
+    level: "info", component: "extension-content", event: "user_turn_observed",
+    eventId: "event-1", sourceTimestamp: new Date().toISOString(), sequence: 1,
+    details: {job_id: "job-a"},
+  }), /DIAGNOSTIC_PERSIST_FAILED/);
+  store.close();
+  rmSync(root, {recursive: true, force: true});
+});
+
 test("native dispatch carries relay-only mode for commit-only targets", () => {
   const root = mkdtempSync(join(tmpdir(), "review-relay-native-commit-mode-"));
   const store = new JobStore(join(root, "state.sqlite"));
