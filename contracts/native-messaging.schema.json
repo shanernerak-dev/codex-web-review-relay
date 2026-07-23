@@ -133,6 +133,16 @@
       "then": {"required": ["reviewMode"]}
     },
     {
+      "if": {
+        "properties": {
+          "type": {"const": "RECONCILE_TRIGGER"},
+          "schemaVersion": {"properties": {"minor": {"minimum": 1}}, "required": ["minor"]}
+        },
+        "required": ["type", "schemaVersion"]
+      },
+      "then": {"required": ["allowUnsentSend"]}
+    },
+    {
       "if": {"properties": {"type": {"enum": ["DISPATCH_TRIGGER_ACCEPTED", "RECONCILE_TRIGGER_ACCEPTED"]}}, "required": ["type"]},
       "then": {"required": ["responseToRequestId", "sessionId", "jobId"]}
     },

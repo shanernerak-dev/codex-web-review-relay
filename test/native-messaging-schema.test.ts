@@ -26,6 +26,18 @@ test("native v1.3 schema accepts actual extension diagnostics messages", () => {
     sessionId: "session", extensionVersion: "0.2.4", capabilities: ["relay-only-v1", "diagnostics-v1"],
   }));
   assert.doesNotThrow(() => validate({
+    schemaVersion: {major: 1, minor: 0}, type: "RECONCILE_TRIGGER", requestId: "legacy-reconcile",
+    sessionId: "session", jobId: "048af8d5-acf9-47c6-9448-2c85918710f7",
+    fingerprint: "a".repeat(64), envelope: "Path: x", envelopeSha256: "b".repeat(64),
+    deadline: "2026-07-23T08:00:00.000Z",
+  }));
+  assert.throws(() => validate({...triggerBase, type: "RECONCILE_TRIGGER", allowUnsentSend: undefined}));
+  assert.doesNotThrow(() => validate({
+    schemaVersion: {major: 1, minor: 3}, type: "RECONCILE_TRIGGER_ACCEPTED",
+    responseToRequestId: "trigger", sessionId: "session",
+    jobId: "048af8d5-acf9-47c6-9448-2c85918710f7", ownershipGeneration: 2,
+  }));
+  assert.doesNotThrow(() => validate({
     schemaVersion: {major: 1, minor: 2}, type: "DIAGNOSTIC_EVENT", requestId: "diag",
     sessionId: "session", jobId: "048af8d5-acf9-47c6-9448-2c85918710f7",
     level: "info", component: "extension-content", event: "lifecycle_requested",

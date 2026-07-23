@@ -349,15 +349,43 @@ test("a fallback terminal cannot overwrite the durable authoritative terminal", 
   await waitFor(() => nativePort.messages.some((message) => message.type === "TURN_IDLE"));
   assert.equal(h.pendingTerminal().type, "TURN_IDLE");
   const fallbackPromise = h.runtime({kind: "LIFECYCLE", type: "TURN_TIMEOUT", jobId: "job-terminal", ownershipGeneration: 5});
+  const firstIdle = nativePort.messages.find((message) => message.type === "TURN_IDLE");
+  h.respondTo(nativePort, firstIdle, "ERROR", {errorCode: "NATIVE_HOST_DISCONNECTED"});
   await waitFor(() => nativePort.messages.filter((message) => message.type === "TURN_IDLE").length === 2);
   assert.equal(h.pendingTerminal().type, "TURN_IDLE");
   assert.equal(nativePort.messages.some((message) => message.type === "TURN_TIMEOUT"), false);
-  for (const request of nativePort.messages.filter((message) => message.type === "TURN_IDLE")) {
-    h.respondTo(nativePort, request, "EVENT_ACK", {jobId: "job-terminal", phase: "TURN_IDLE"});
-  }
-  assert.equal((await idlePromise).ok, true);
+  const replay = nativePort.messages.filter((message) => message.type === "TURN_IDLE")[1];
+  h.respondTo(nativePort, replay, "EVENT_ACK", {jobId: "job-terminal", phase: "TURN_IDLE"});
+  assert.equal((await idlePromise).ok, false);
   assert.equal((await fallbackPromise).ok, true);
   assert.equal(h.pendingTerminal(), null);
+});
+
+test("concurrent terminal admission preserves exactly one authoritative event", async () => {
+  const h = harness();
+  const armResult = h.runtime({kind: "POPUP_ARM"});
+  await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
+  const nativePort = h.ports[0];
+  const armRequest = nativePort.messages.find((message) => message.type === "ARM_SESSION");
+  h.respondTo(nativePort, armRequest, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
+  await armResult;
+  await nativePort.onMessage.emit({
+    schemaVersion: {major: 1, minor: 3}, type: "DISPATCH_TRIGGER", requestId: "dispatch-concurrent",
+    sessionId: armRequest.sessionId, jobId: "job-concurrent", envelope: "Path: x",
+    ownershipGeneration: 6, deadline: new Date(Date.now() + 10_000).toISOString(),
+  });
+  const idle = h.runtime({kind: "LIFECYCLE", type: "TURN_IDLE", jobId: "job-concurrent", ownershipGeneration: 6, assistantOutput: "verdict"});
+  const timeout = h.runtime({kind: "LIFECYCLE", type: "TURN_TIMEOUT", jobId: "job-concurrent", ownershipGeneration: 6});
+  await waitFor(() => nativePort.messages.some((message) => message.type === "TURN_IDLE"));
+  assert.equal(h.pendingTerminal().type, "TURN_IDLE");
+  assert.equal(nativePort.messages.some((message) => message.type === "TURN_TIMEOUT"), false);
+  const first = nativePort.messages.find((message) => message.type === "TURN_IDLE");
+  h.respondTo(nativePort, first, "ERROR", {errorCode: "NATIVE_HOST_DISCONNECTED"});
+  await waitFor(() => nativePort.messages.filter((message) => message.type === "TURN_IDLE").length === 2);
+  const replay = nativePort.messages.filter((message) => message.type === "TURN_IDLE")[1];
+  h.respondTo(nativePort, replay, "EVENT_ACK", {jobId: "job-concurrent", phase: "TURN_IDLE"});
+  assert.equal((await idle).ok, false);
+  assert.equal((await timeout).ok, true);
 });
 
 test("diagnostic queue is retained for a correlated ACK without persisted evidence", async () => {

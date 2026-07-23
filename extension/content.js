@@ -225,9 +225,14 @@
       return;
     }
     if (observed.state === "draft-unsent" && message.allowUnsentSend === true) {
-      monitor(message, typeof adapter.resumeDraftTracked === "function"
-        ? await adapter.resumeDraftTracked(document, message.envelope)
-        : await adapter.resumeDraft(document, message.envelope));
+      try {
+        monitor(message, typeof adapter.resumeDraftTracked === "function"
+          ? await adapter.resumeDraftTracked(document, message.envelope)
+          : await adapter.resumeDraft(document, message.envelope));
+      } catch (error) {
+        await emitStructuralDiagnostics(message, error?.turnTracker ?? null);
+        throw error;
+      }
       return;
     }
     await sendLifecycleUntilAck("RECONCILE_MISMATCH", {

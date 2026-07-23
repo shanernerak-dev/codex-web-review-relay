@@ -17,6 +17,7 @@ let reconnectAttempts = 0;
 let reconnectDisabled = false;
 let restorePromise = null;
 let sessionOperation = Promise.resolve();
+let terminalOperation = Promise.resolve();
 function enqueueSessionOperation(operation) {
   const next = sessionOperation.then(operation, operation);
   sessionOperation = next.catch(() => {});
@@ -112,7 +113,14 @@ async function onNativeMessage(message) {
     await sendLifecycle("SEND_UNCERTAIN", message.jobId, errorCode);
   }
 }
-async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = null, ownershipGeneration = armed?.ownershipGeneration) {
+async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = null, ownershipGeneration = armed?.ownershipGeneration, serialized = false) {
+  const terminal = ["TURN_IDLE", "TURN_TIMEOUT", "RECONCILE_MISMATCH", "SEND_UNCERTAIN"].includes(type);
+  if (terminal && !serialized) {
+    const operation = () => sendLifecycle(type, jobId, errorCode, assistantOutput, ownershipGeneration, true);
+    const next = terminalOperation.then(operation, operation);
+    terminalOperation = next.catch(() => {});
+    return next;
+  }
   if (!armed) throw new Error("SESSION_NOT_ARMED");
   const current = armed;
   if (type === "SESSION_LOST") {
@@ -125,11 +133,10 @@ async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = nu
     return;
   }
   diagnostic("info", "lifecycle_send", {job_id: jobId, message_type: type, ...(errorCode ? {error_code: errorCode} : {}), ...(assistantOutput !== null ? {length: assistantOutput.length} : {})});
-  const terminal = ["TURN_IDLE", "TURN_TIMEOUT", "RECONCILE_MISMATCH", "SEND_UNCERTAIN"].includes(type);
   if (terminal) {
     const existing = (await chrome.storage.local.get(PENDING_TERMINAL_KEY))[PENDING_TERMINAL_KEY];
     if (existing?.jobId === jobId && existing.type !== type) {
-      return sendLifecycle(existing.type, existing.jobId, existing.errorCode, existing.assistantOutput, existing.ownershipGeneration);
+      return sendLifecycle(existing.type, existing.jobId, existing.errorCode, existing.assistantOutput, existing.ownershipGeneration, true);
     }
     await chrome.storage.local.set({[PENDING_TERMINAL_KEY]: {
       type, jobId, errorCode, assistantOutput, sessionId: current.sessionId, ownershipGeneration,

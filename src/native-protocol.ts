@@ -168,6 +168,16 @@ export class NativeBridge {
     const phase = phaseByType[type as keyof typeof phaseByType];
     if (!phase) throw new Error(`NATIVE_MESSAGE_TYPE_UNSUPPORTED:${type}`);
     let current = this.coordinator.store.getJob(jobId);
+    const terminalPhases = new Set(["TURN_IDLE", "MISMATCH", "TIMEOUT", "BLOCKED"]);
+    if (terminalPhases.has(current.phase) && terminalPhases.has(phase) && current.phase !== phase) {
+      return {
+        schemaVersion: NATIVE_SCHEMA_VERSION,
+        type: "EVENT_ACK",
+        responseToRequestId: requestId ?? undefined,
+        jobId,
+        phase: current.phase,
+      };
+    }
     if (type === "TURN_IDLE") {
       if (typeof message.assistantOutput !== "string" || message.assistantOutput.length === 0) throw new Error("ASSISTANT_OUTPUT_REQUIRED");
       const output = message.assistantOutput;
@@ -181,16 +191,6 @@ export class NativeBridge {
       }
     }
     const errorCode = typeof message.errorCode === "string" && message.errorCode.length > 0 ? message.errorCode : null;
-    const terminalPhases = new Set(["TURN_IDLE", "MISMATCH", "TIMEOUT", "BLOCKED"]);
-    if (terminalPhases.has(current.phase) && terminalPhases.has(phase) && current.phase !== phase) {
-      return {
-        schemaVersion: NATIVE_SCHEMA_VERSION,
-        type: "EVENT_ACK",
-        responseToRequestId: requestId ?? undefined,
-        jobId,
-        phase: current.phase,
-      };
-    }
     const job = current.phase === phase ? current : this.coordinator.transition(jobId, phase, errorCode);
     return {
       schemaVersion: NATIVE_SCHEMA_VERSION,
