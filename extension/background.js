@@ -1,8 +1,10 @@
 "use strict";
 const HOST_NAME = "dev.shanernerak.codex_web_review_relay";
-const SCHEMA_VERSION = {major: 1, minor: 1};
-const CAPABILITIES = ["relay-only-v1"];
+const SCHEMA_VERSION = {major: 1, minor: 2};
+const CAPABILITIES = ["relay-only-v1", "diagnostics-v1"];
 const EXTENSION_VERSION = chrome.runtime.getManifest().version;
+const DIAGNOSTIC_KEY = "reviewRelayDiagnosticsV1";
+const DIAGNOSTIC_LIMIT = 256;
 const SESSION_KEY = "relaySession";
 const MAX_RECONNECT_ATTEMPTS = 5;
 let port = null;
@@ -19,6 +21,7 @@ function enqueueSessionOperation(operation) {
   return next;
 }
 const pending = new Map();
+let diagnosticOperation = Promise.resolve();
 function uuid() { return crypto.randomUUID(); }
 function reconnectDelay(attempt) { return Math.min(8_000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 125); }
 function clearHeartbeat() { if (heartbeat !== null) clearInterval(heartbeat); heartbeat = null; }
@@ -45,12 +48,32 @@ function nativeRequest(type, fields = {}) {
     catch (error) { clearTimeout(timer); pending.delete(requestId); reject(error); }
   });
 }
+function diagnostic(level, event, fields = {}, component = "extension-background") {
+  diagnosticOperation = diagnosticOperation.then(async () => {
+    const stored = await chrome.storage.local.get(DIAGNOSTIC_KEY);
+    const queue = Array.isArray(stored[DIAGNOSTIC_KEY]) ? stored[DIAGNOSTIC_KEY] : [];
+    queue.push({level, component, event, sessionId: armed?.sessionId, jobId: fields.job_id, details: fields});
+    await chrome.storage.local.set({[DIAGNOSTIC_KEY]: queue.slice(-DIAGNOSTIC_LIMIT)});
+    await flushDiagnostics();
+  }).catch(() => {});
+}
+async function flushDiagnostics() {
+  const stored = await chrome.storage.local.get(DIAGNOSTIC_KEY);
+  const queue = Array.isArray(stored[DIAGNOSTIC_KEY]) ? stored[DIAGNOSTIC_KEY] : [];
+  let sent = 0;
+  for (const item of queue) {
+    try { await nativeRequest("DIAGNOSTIC_EVENT", item); sent += 1; }
+    catch { break; }
+  }
+  if (sent > 0) await chrome.storage.local.set({[DIAGNOSTIC_KEY]: queue.slice(sent)});
+}
 async function onNativeMessage(message) {
   if (typeof message.responseToRequestId === "string" && pending.has(message.responseToRequestId)) {
     const request = pending.get(message.responseToRequestId); pending.delete(message.responseToRequestId); clearTimeout(request.timer);
     message.type === "ERROR" ? request.reject(new Error(message.errorCode ?? "NATIVE_ERROR")) : request.resolve(message); return;
   }
   if (!["DISPATCH_TRIGGER", "RECONCILE_TRIGGER"].includes(message.type) || !armed || message.sessionId !== armed.sessionId) return;
+  diagnostic("info", "trigger_received", {job_id: message.jobId, message_type: message.type});
   armed.activeJobId = message.jobId;
   armed.state = "ACTIVE";
   await persistArmed();
@@ -60,9 +83,11 @@ async function onNativeMessage(message) {
     const response = await chrome.tabs.sendMessage(armed.tabId, {kind: message.type, jobId: message.jobId, envelope: message.envelope, reviewMode: message.reviewMode, deadline: message.deadline, allowUnsentSend: message.allowUnsentSend});
     if (!response?.ok) throw new Error(response?.errorCode ?? "CONTENT_DISPATCH_REJECTED");
     ensurePort().postMessage({schemaVersion: SCHEMA_VERSION, type: `${message.type}_ACCEPTED`, responseToRequestId: message.requestId, sessionId: armed.sessionId, jobId: message.jobId});
+    diagnostic("info", "trigger_accepted", {job_id: message.jobId, message_type: message.type});
   } catch (error) {
     const errorCode = error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_DISPATCH_ERROR";
     if (armed) { armed.lastError = errorCode; await persistArmed(); }
+    diagnostic("error", "trigger_failed", {job_id: message.jobId, message_type: message.type, error_code: errorCode});
     await sendLifecycle("SEND_UNCERTAIN", message.jobId, errorCode);
   }
 }
@@ -78,7 +103,9 @@ async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = nu
     }
     return;
   }
+  diagnostic("debug", "lifecycle_send", {job_id: jobId, message_type: type, ...(errorCode ? {error_code: errorCode} : {}), ...(assistantOutput !== null ? {length: assistantOutput.length} : {})});
   await nativeRequest(type, {sessionId: current.sessionId, jobId, ...(errorCode ? {errorCode} : {}), ...(assistantOutput !== null ? {assistantOutput} : {})});
+  diagnostic("debug", "lifecycle_acked", {job_id: jobId, message_type: type});
   if (["TURN_IDLE", "SEND_UNCERTAIN", "TURN_TIMEOUT"].includes(type) && armed?.sessionId === current.sessionId) {
     armed.activeJobId = null;
     armed.state = "ARMED";
@@ -97,6 +124,7 @@ async function rearmSaved(saved) {
   const result = await nativeRequest("ARM_SESSION", {sessionId: saved.sessionId, extensionVersion: EXTENSION_VERSION, capabilities: CAPABILITIES});
   armed = {...saved, activeJobId: saved.activeJobId ?? null, state: saved.activeJobId ? "ACTIVE" : "ARMED", connection: "connected", lastError: null};
   reconnectAttempts = 0; reconnectDisabled = false; startHeartbeat();
+  void flushDiagnostics();
   return result;
 }
 function scheduleReconnect() {
@@ -141,6 +169,7 @@ async function arm() {
     armed = {sessionId, tabId: tab.id, conversationIdentity: state.conversationIdentity, activeJobId: null, state: "ARMED", manualArm: true, connection: "connected", lastError: null, expiresAt: Date.now() + 1_800_000};
     reconnectAttempts = 0; startHeartbeat();
     await chrome.storage.local.set({[SESSION_KEY]: armed});
+    diagnostic("info", "session_armed", {});
     return {sessionId, tabId: tab.id, leaseExpiresAt: result.leaseExpiresAt};
   });
 }
@@ -186,6 +215,11 @@ async function disarm() {
   });
 }
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
+  if (message.kind === "DIAGNOSTIC") {
+    diagnostic(message.level ?? "debug", message.event ?? "content_event", {...(message.details ?? {}), job_id: message.jobId}, "extension-content");
+    respond({ok: true});
+    return;
+  }
   if (message.kind === "LIFECYCLE") {
     if (!armed) { respond({ok: false, errorCode: "SESSION_NOT_ARMED"}); return; }
     if (armed.state !== "ACTIVE" || !armed.activeJobId) { respond({ok: false, errorCode: "LIFECYCLE_JOB_NOT_ACTIVE"}); return; }

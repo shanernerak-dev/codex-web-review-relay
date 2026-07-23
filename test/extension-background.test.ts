@@ -17,7 +17,12 @@ function event() {
 }
 
 function port() {
-  return {messages: [] as any[], onMessage: event(), onDisconnect: event(), postMessage(message: any) { this.messages.push(message); }, disconnect() { void this.onDisconnect.emit(); }};
+  return {messages: [] as any[], onMessage: event(), onDisconnect: event(), postMessage(message: any) {
+    this.messages.push(message);
+    if (message.type === "DIAGNOSTIC_EVENT") queueMicrotask(() => void this.onMessage.emit({
+      schemaVersion: {major: 1, minor: 2}, type: "DIAGNOSTIC_ACK", responseToRequestId: message.requestId,
+    }));
+  }, disconnect() { void this.onDisconnect.emit(); }};
 }
 
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeout = 2_000): Promise<void> {
@@ -58,7 +63,12 @@ function harness() {
       onUpdated: tabUpdated,
     },
   };
-  const context = vm.createContext({chrome, crypto: webcrypto, TextEncoder, Error, Promise, Math, Date, setTimeout, clearTimeout, setInterval, clearInterval});
+  const unrefInterval = (callback: (...args: any[]) => void, delay?: number) => {
+    const handle = setInterval(callback, delay);
+    handle.unref();
+    return handle;
+  };
+  const context = vm.createContext({chrome, crypto: webcrypto, TextEncoder, Error, Promise, Math, Date, queueMicrotask, setTimeout, clearTimeout, setInterval: unrefInterval, clearInterval});
   vm.runInContext(readFileSync(resolve("extension/background.js"), "utf8"), context, {filename: "background.js"});
 
   async function runtime(message: any, senderTabId: number | null = message.kind === "LIFECYCLE" ? 7 : null): Promise<any> {
@@ -87,9 +97,9 @@ test("extension waits for lifecycle ACK, acknowledges dispatch receipt and recov
   await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
   const firstPort = h.ports[0];
   const armRequest = firstPort.messages.find((message) => message.type === "ARM_SESSION");
-  assert.equal(Array.from(armRequest.capabilities).join(","), "relay-only-v1");
+  assert.equal(Array.from(armRequest.capabilities).join(","), "relay-only-v1,diagnostics-v1");
   assert.equal(armRequest.schemaVersion.major, 1);
-  assert.equal(armRequest.schemaVersion.minor, 1);
+  assert.equal(armRequest.schemaVersion.minor, 2);
   h.respondTo(firstPort, armRequest, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
   assert.equal((await armResult).ok, true);
   const duplicateArm = await h.runtime({kind: "POPUP_ARM"});

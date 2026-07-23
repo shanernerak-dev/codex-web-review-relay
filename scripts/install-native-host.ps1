@@ -52,6 +52,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Failed to restrict install directory ACL.' }
 
 $tokenPath = Join-Path $install 'bearer-token.txt'
 $statePath = Join-Path $install 'state.sqlite'
+$diagnosticLogPath = Join-Path $install 'review-relay.events.jsonl'
 $configPath = Join-Path $install 'relay.config.json'
 $launcherPath = Join-Path $install 'codex-web-review-relay.exe'
 $generatedSourcePath = Join-Path $install 'launcher.generated.cs'
@@ -70,6 +71,8 @@ $config = [ordered]@{
     pythonExecutable = $python; helperPath = $HelperPath
     nativeHostName = $hostName; extensionId = $extensionId
     requestWaitSliceMs = 300000; turnDeadlineMs = 1800000
+    diagnosticLogPath = $diagnosticLogPath; diagnosticLogLevel = 'info'
+    diagnosticLogMaxBytes = 10485760; diagnosticLogRetainedFiles = 3
 }
 [System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json -Depth 4), [System.Text.UTF8Encoding]::new($false))
 

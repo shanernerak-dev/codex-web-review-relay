@@ -50,6 +50,17 @@ Stage 3 的完整评审回传采用“结构化 turn 提取 + relay completion A
 - `assistant_output_sha256` 是完整性、去重和 reconnect/retry 审计字段，不负责判断 turn 属于哪一轮，也不要求把 hash 设计成独立的 completion 状态机。若输出尚未完成，hash 只能描述当前快照，不能作为 formal verdict evidence。
 - 如果 lifecycle ACK 返回 `{ok:false}`，extension 必须继续保持可恢复监控或显式进入 recovery；不得把失败响应当作成功并停止 observer。native host 未 ACK 前不得将本次 capture 视为已交付。
 
+### Evidence-first transport diagnostics
+
+Stage 3 后续不得仅凭 persisted phase 推断浏览器侧失败位置。先建立以下可查询观测面，再依据一次真实失败的事件序列修复 transport：
+
+- extension / content script 产生不含对话正文的结构化 diagnostic event，经现有 Native Messaging port 交给 native host；extension 不直接写任意本地文件。
+- native host 将事件追加到 config 指定的固定 JSONL 路径，支持 `off` / `error` / `info` / `debug` / `trace` 级别、大小轮转和保留文件数。
+- 每条事件至少包含 `timestamp`、`level`、`component`、`event`；存在时关联 `session_id`、`job_id`、`request_id`、`message_type`、`phase`、`error_code`。
+- 日志不得记录 bearer token、cookie、handoff/envelope 正文、完整 conversation 或 assistant output；文本证据只记录长度、SHA-256、turn identity、计数和布尔状态。
+- Native Messaging 断连期间，extension 仅保留有界 diagnostic ring buffer；重连后补发，不能让诊断队列阻塞 review lifecycle。
+- MCP 提供按 `job_id` 查询最近事件的只读工具。每次全文传输失败后，repo agent 必须先读取该 job 的日志证据；若日志缺口本身阻止归因，应报告缺口，不得用猜测代替。
+
 该模型将“完整对话分割”和“评审完成确认”明确分层：前者确保 turn、角色、顺序和内容不遗漏；后者确认这些内容确实属于本次 job、已经停止生成，并已被 native host 接收。
 
 ### Extension 单绑定状态机

@@ -3,8 +3,9 @@ import { sha256 } from "./canonical.ts";
 import type { TriggerEnvelope } from "./envelope.ts";
 import { JobCoordinator } from "./job-coordinator.ts";
 import type { StoredSession } from "./job-store.ts";
+import type { DiagnosticLogger, DiagnosticLevel } from "./diagnostic-log.ts";
 
-export const NATIVE_SCHEMA_VERSION = Object.freeze({major: 1, minor: 1});
+export const NATIVE_SCHEMA_VERSION = Object.freeze({major: 1, minor: 2});
 export const RELAY_ONLY_CAPABILITY = "relay-only-v1";
 const MAX_ASSISTANT_OUTPUT_BYTES = 131_072;
 
@@ -43,10 +44,12 @@ export class NativeBridge {
     timer: ReturnType<typeof setTimeout>;
   }>();
   readonly acknowledgedOutbound = new Set<string>();
+  readonly diagnostics?: DiagnosticLogger;
 
-  constructor(coordinator: JobCoordinator, leaseMs = 30_000) {
+  constructor(coordinator: JobCoordinator, leaseMs = 30_000, diagnostics?: DiagnosticLogger) {
     this.coordinator = coordinator;
     this.leaseMs = leaseMs;
+    this.diagnostics = diagnostics;
   }
 
   handleInbound(value: unknown): NativeRecord | null {
@@ -57,6 +60,26 @@ export class NativeBridge {
     const peerVersion = validateVersion(message);
     const type = requireText(message, "type");
     const requestId = typeof message.requestId === "string" ? message.requestId : null;
+    if (type === "DIAGNOSTIC_EVENT") {
+      if (!requestId) throw new Error("NATIVE_MESSAGE_INVALID:requestId");
+      const level = requireText(message, "level") as DiagnosticLevel;
+      if (!["error", "info", "debug", "trace"].includes(level)) throw new Error("DIAGNOSTIC_LEVEL_INVALID");
+      const component = requireText(message, "component");
+      const event = requireText(message, "event");
+      const details = message.details !== null && typeof message.details === "object" && !Array.isArray(message.details)
+        ? message.details as NativeRecord : {};
+      this.diagnostics?.write(level, component, event, {
+        ...details,
+        session_id: typeof message.sessionId === "string" ? message.sessionId : undefined,
+        job_id: typeof message.jobId === "string" ? message.jobId : undefined,
+        request_id: requestId,
+      });
+      return {
+        schemaVersion: NATIVE_SCHEMA_VERSION,
+        type: "DIAGNOSTIC_ACK",
+        responseToRequestId: requestId,
+      };
+    }
     if (type === "DISPATCH_TRIGGER_ACCEPTED" || type === "RECONCILE_TRIGGER_ACCEPTED") {
       const responseTo = requireText(message, "responseToRequestId");
       const pending = this.pendingOutbound.get(responseTo);

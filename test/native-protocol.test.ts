@@ -164,7 +164,7 @@ test("native bridge rejects unsupported minor and records peer version", () => {
   const store = new JobStore(join(root, "state.sqlite"));
   const bridge = new NativeBridge(new JobCoordinator(store));
   assert.throws(
-    () => bridge.handleInbound({schemaVersion: {major: 1, minor: 2}, type: "ARM_SESSION"}),
+    () => bridge.handleInbound({schemaVersion: {major: 1, minor: 3}, type: "ARM_SESSION"}),
     /NATIVE_SCHEMA_MINOR_UNSUPPORTED/,
   );
   bridge.handleInbound({

@@ -68,7 +68,7 @@ test("localhost MCP server enforces auth, origin and protocol version", async ()
   });
   assert.equal(tools.status, 200);
   assert.deepEqual((await tools.json()).result.tools.map((tool: {name: string}) => tool.name), [
-    "request_review", "recover_review", "get_review_transport_status",
+    "request_review", "recover_review", "get_review_transport_status", "get_review_diagnostics",
   ]);
   const call = await fetch(`${base}/mcp`, {
     method: "POST",

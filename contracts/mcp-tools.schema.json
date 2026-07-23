@@ -53,6 +53,19 @@
           }
         ]
       }
+    },
+    {
+      "name": "get_review_diagnostics",
+      "description": "Read bounded, redacted transport diagnostic events for one persisted job.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["job_id"],
+        "properties": {
+          "job_id": {"type": "string", "format": "uuid"},
+          "limit": {"type": "integer", "minimum": 1, "maximum": 500}
+        }
+      }
     }
   ]
 }

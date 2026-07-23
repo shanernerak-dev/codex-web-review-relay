@@ -15,9 +15,18 @@ test("config separates bounded wait slice from hard turn deadline", () => {
   const config = validateConfig(validConfig());
   assert.equal(config.requestWaitSliceMs, 300_000);
   assert.equal(config.turnDeadlineMs, 900_000);
+  assert.equal(config.diagnosticLogPath, "state.sqlite.events.jsonl");
+  assert.equal(config.diagnosticLogLevel, "info");
   assert.throws(() => validateConfig({...validConfig(), requestWaitSliceMs: 300_001}), /CONFIG_INVALID:requestWaitSliceMs/);
   assert.throws(() => validateConfig({...validConfig(), turnDeadlineMs: 1_800_001}), /CONFIG_INVALID:turnDeadlineMs/);
   assert.throws(() => validateConfig({...validConfig(), requestWaitSliceMs: 300_000, turnDeadlineMs: 299_999}), /CONFIG_INVALID:turnDeadlineMs/);
+});
+
+test("config validates diagnostic logging controls", () => {
+  assert.equal(validateConfig({...validConfig(), diagnosticLogLevel: "trace"}).diagnosticLogLevel, "trace");
+  assert.throws(() => validateConfig({...validConfig(), diagnosticLogLevel: "verbose"}), /CONFIG_INVALID:diagnosticLogLevel/);
+  assert.throws(() => validateConfig({...validConfig(), diagnosticLogMaxBytes: 100}), /CONFIG_INVALID:diagnosticLogMaxBytes/);
+  assert.throws(() => validateConfig({...validConfig(), diagnosticLogRetainedFiles: 0}), /CONFIG_INVALID:diagnosticLogRetainedFiles/);
 });
 
 test("config rejects helper paths outside the repository-relative boundary", () => {

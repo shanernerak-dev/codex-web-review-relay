@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, win32 } from "node:path";
+import type { DiagnosticLevel } from "./diagnostic-log.ts";
 
 export interface RelayConfig {
   listenHost: "127.0.0.1" | "::1";
@@ -14,6 +15,10 @@ export interface RelayConfig {
   extensionId: string;
   requestWaitSliceMs: number;
   turnDeadlineMs: number;
+  diagnosticLogPath: string;
+  diagnosticLogLevel: DiagnosticLevel;
+  diagnosticLogMaxBytes: number;
+  diagnosticLogRetainedFiles: number;
 }
 
 function isRepositoryRelativePath(value: string): boolean {
@@ -54,7 +59,17 @@ export function validateConfig(value: unknown): RelayConfig {
   if ((config.turnDeadlineMs as number) < (config.requestWaitSliceMs as number)) {
     throw new Error("CONFIG_INVALID:deadlineOrdering");
   }
-  return config as unknown as RelayConfig;
+  const diagnosticLogPath = typeof config.diagnosticLogPath === "string" && config.diagnosticLogPath.length > 0
+    ? config.diagnosticLogPath : `${config.stateDbPath as string}.events.jsonl`;
+  const diagnosticLogLevel = config.diagnosticLogLevel ?? "info";
+  if (!["off", "error", "info", "debug", "trace"].includes(diagnosticLogLevel as string)) throw new Error("CONFIG_INVALID:diagnosticLogLevel");
+  const diagnosticLogMaxBytes = config.diagnosticLogMaxBytes ?? 10_485_760;
+  if (!Number.isInteger(diagnosticLogMaxBytes) || (diagnosticLogMaxBytes as number) < 65_536) throw new Error("CONFIG_INVALID:diagnosticLogMaxBytes");
+  const diagnosticLogRetainedFiles = config.diagnosticLogRetainedFiles ?? 3;
+  if (!Number.isInteger(diagnosticLogRetainedFiles) || (diagnosticLogRetainedFiles as number) < 1 || (diagnosticLogRetainedFiles as number) > 10) {
+    throw new Error("CONFIG_INVALID:diagnosticLogRetainedFiles");
+  }
+  return {...config, diagnosticLogPath, diagnosticLogLevel, diagnosticLogMaxBytes, diagnosticLogRetainedFiles} as RelayConfig;
 }
 
 export function loadConfig(path: string): RelayConfig {

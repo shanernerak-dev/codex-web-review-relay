@@ -6,15 +6,24 @@
   const RELAY_ONLY_QUIET_IDLE_MS = 2_500;
   const RELAY_ONLY_OUTPUT_STABILITY_MS = 2_500;
   let active = null;
+  function diagnostic(level, event, jobId, details = {}) {
+    void chrome.runtime.sendMessage({kind: "DIAGNOSTIC", level, event, jobId, details}).catch(() => {});
+  }
   async function sendLifecycle(type, job, errorCode = null, assistantOutput = null) {
+    diagnostic("debug", "lifecycle_requested", job.jobId, {message_type: type, ...(errorCode ? {error_code: errorCode} : {}), ...(assistantOutput !== null ? {length: assistantOutput.length} : {})});
     const response = await chrome.runtime.sendMessage({kind: "LIFECYCLE", type, jobId: job.jobId, errorCode, ...(assistantOutput !== null ? {assistantOutput} : {})});
-    if (response?.ok !== true) throw new Error(response?.errorCode ?? response?.error ?? "LIFECYCLE_ACK_REJECTED");
+    if (response?.ok !== true) {
+      diagnostic("error", "lifecycle_rejected", job.jobId, {message_type: type, error_code: response?.errorCode ?? response?.error ?? "LIFECYCLE_ACK_REJECTED"});
+      throw new Error(response?.errorCode ?? response?.error ?? "LIFECYCLE_ACK_REJECTED");
+    }
+    diagnostic("debug", "lifecycle_acked", job.jobId, {message_type: type});
     return response;
   }
   function requireLiveDeadline(message) { if (!Number.isFinite(Date.parse(message.deadline)) || Date.now() >= Date.parse(message.deadline)) throw new Error("MESSAGE_DEADLINE_EXPIRED"); }
 
   function monitor(message, state, userAcked = false, assistantStarted = false) {
     const job = {jobId: message.jobId, deadline: Date.parse(message.deadline)};
+    diagnostic("info", "monitor_started", job.jobId, {state: userAcked ? "reconcile" : "dispatch"});
     const relayOnly = message.reviewMode === "relay-only";
     const quietIdleMs = relayOnly ? RELAY_ONLY_QUIET_IDLE_MS : PR_QUIET_IDLE_MS;
     const outputStabilityMs = relayOnly ? RELAY_ONLY_OUTPUT_STABILITY_MS : PR_OUTPUT_STABILITY_MS;
@@ -32,7 +41,7 @@
     let assistantNode = state.assistant ?? null;
     let assistantNodes = Array.isArray(state.assistants) ? state.assistants : (state.assistant ? [state.assistant] : []);
     let lastMutationAt = Date.now();
-    const finish = () => { if (settled) return; settled = true; observer.disconnect(); clearInterval(timer); clearInterval(pollTimer); active = null; };
+    const finish = () => { if (settled) return; settled = true; observer.disconnect(); clearInterval(timer); clearInterval(pollTimer); active = null; diagnostic("info", "monitor_finished", job.jobId); };
     const inspect = async () => {
       if (settled) return;
       if (inspectRunning) { inspectPending = true; return; }
@@ -42,7 +51,7 @@
           inspectPending = false;
           if (!userAcked) {
             const observedUser = adapter.newTurn(document, state.baseline, "user", message.envelope);
-            if (observedUser) { userNode = observedUser; await sendLifecycle("USER_TURN_ACKED", job); userAcked = true; }
+            if (observedUser) { userNode = observedUser; diagnostic("info", "user_turn_observed", job.jobId); await sendLifecycle("USER_TURN_ACKED", job); userAcked = true; }
           }
           const observedAssistants = userAcked && userNode && typeof adapter.assistantTurnsAfter === "function"
             ? adapter.assistantTurnsAfter(document, userNode)
@@ -52,7 +61,7 @@
             : (userAcked ? adapter.newTurn(document, state.baseline, "assistant") : null);
           if (observedAssistants.length > 0) assistantNodes = observedAssistants;
           if (observedAssistant) assistantNode = observedAssistant;
-          if (userAcked && !assistantStarted && assistantNode) { await sendLifecycle("ASSISTANT_STARTED", job); assistantStarted = true; assistantStartedAt = Date.now(); }
+          if (userAcked && !assistantStarted && assistantNode) { diagnostic("info", "assistant_turn_observed", job.jobId, {count: assistantNodes.length || 1}); await sendLifecycle("ASSISTANT_STARTED", job); assistantStarted = true; assistantStartedAt = Date.now(); }
           if (assistantStarted && adapter.isGenerating(document)) observedGenerating = true;
           const now = Date.now();
           const generating = adapter.isGenerating(document);
@@ -70,6 +79,7 @@
             const stable = candidateOutput.length > 0 && now - candidateOutputSince >= outputStabilityMs;
             const completedEvidence = typeof adapter.isAssistantComplete === "function" && adapter.isAssistantComplete(document, assistantNodes.length > 0 ? assistantNodes : assistantNode);
             const completionObserved = relayOnly ? completedEvidence : (observedGenerating || now - assistantStartedAt >= outputStabilityMs);
+            diagnostic("trace", "completion_snapshot", job.jobId, {length: candidateOutput.length, generating, response_idle: responseIdle, quiet, stable, completion_observed: completionObserved});
             if (quiet && stable && completionObserved && !idleSendPending && now >= nextIdleAttemptAt) {
               idleSendPending = true;
               try {
@@ -84,6 +94,7 @@
           }
         } while (inspectPending && !settled);
       } catch (error) {
+        diagnostic("error", "monitor_failed", job.jobId, {error_code: error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_MONITOR_ERROR"});
         try { await sendLifecycle(userAcked ? "SESSION_LOST" : "SEND_UNCERTAIN", job, error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_MONITOR_ERROR"); } catch {}
         finish();
       }

@@ -275,7 +275,7 @@ test("content monitor retries TURN_IDLE after a rejected native ACK", async () =
   h.failNextTurnIdleAcks(1);
   h.mutate();
   await waitFor(() => h.lifecycleMessages.filter((entry) => entry.type === "TURN_IDLE").length >= 2, 7_000);
-  assert.equal(h.lifecycleMessages.at(-1)?.assistantOutput, "formal verdict after retry");
+  assert.equal(h.lifecycleMessages.filter((entry) => entry.type === "TURN_IDLE").at(-1)?.assistantOutput, "formal verdict after retry");
 });
 
 test("expired dispatch and recovery fail before any DOM write or click", async () => {

@@ -69,6 +69,8 @@ The relay itself is **localhost-only transport** — it has no cloud dependency 
 **Layer 1 — Relay transport (always required, zero external dependency):**
 The relay process returns transport completion through the MCP channel (`assistant_output` + SHA-256). The formal verdict source depends on the target mode: PR mode requires PR-comment readback; the currently authorized Stage 3 commit-only pilot uses the complete `assistant_output` returned by the reviewer. The relay process itself has no network egress.
 
+Transport diagnostics are written by the native host to the fixed `diagnosticLogPath` configured at install time (default installation: `review-relay.events.jsonl`). Set `diagnosticLogLevel` to `off`, `error`, `info`, `debug`, or `trace`; size and retention are controlled by `diagnosticLogMaxBytes` and `diagnosticLogRetainedFiles`. After a failed review, call `get_review_diagnostics` with its `job_id` before diagnosing the cause. Logs contain event metadata, IDs, lengths, and hashes only—not tokens, cookies, handoff/envelope bodies, full conversations, or assistant output.
+
 **Layer 2 — GitHub PR comment as formal record (optional):**
 For PR mode, the PR comment is the formal verdict record and requires the reviewer to publish/read it back. It is optional only for an explicitly authorized commit-only acceptance pilot, where the complete relay `assistant_output` is the formal source for that gate. Auditability without a PR can be achieved by retaining the handoff file and the relay's persisted job record (SQLite).
 
