@@ -4,11 +4,12 @@
 
 ## 状态
 
-- 当前阶段：Stage 3（进行中）。
+- 当前阶段：Stage 3 已验收；README/contract、PR Ready 与 producer adaptation 收尾进行中。
 - Stage 1 acceptance：已由 Maintainer 批准进入 Stage 2；round-04 review-fix 在 reviewed head `09c0e063214646542666c5dda8057cd46b404d59` 返回 `PASS`，并确认 `RGEN-S1-005` / `RGEN-S1-006` 为 `ACCEPTED`。该记录不等同于 Ready、Issue acceptance 或 merge authorization。
 - Stage 2 canonical review identity：`stage2-main/round-01-review-request`。此前 `main/round-05` 仅作为 Stage 2 初次尝试的历史评审记录保留；按 Stage-scoped round convention，当前 Stage 2 从 `round-01` 重新计数。
 - Stage 2 review gate：`stage2-main/round-02` 在 reviewed head `7d7eacb46adf96f09ccbe1f9a8b0a2019c6146be` 返回 `PASS`，`RGEN-S2-001` / `RGEN-S2-004` 为 `ACCEPTED`，既有 `RGEN-S2-002` / `RGEN-S2-003` 保持锁定；`round-03` 的 producer compatibility evidence amendment 也返回 `PASS`。
 - Stage 2 acceptance：Maintainer 于 2026-07-22 明确批准进入 Stage 3。该 acceptance 不等同于 Stage 3 acceptance、Ready、merge authorization 或 producer Issue closeout。
+- Stage 3 acceptance：round-18 acceptance-review 在 reviewed head `2a8b973d0bb17ae04c0a5b50ba5a5b4d2fa14d45` 返回 `PASS`，`RGEN-S3-001` 至 `RGEN-S3-022` 全部 `ACCEPTED`；Maintainer 于 2026-07-23 明确批准 Stage 3 acceptance。commit-only relay-only mode 自此成为一般契约。该 acceptance 不等同于 PR Ready、merge authorization、Issue acceptance 或 producer Issue #44 closeout。
 - Stage 3 round-01 review：reviewed head `4e77def8253c013e1911c1630060a32f20390867` 返回 `REQUEST CHANGES`，`RGEN-S3-001` 至 `RGEN-S3-005` 已记录；该 handoff 保持 append-only。
 - Stage 3 round-02 review：reviewed head `981c7ce` 返回 `REQUEST CHANGES`；`RGEN-S3-001` / `RGEN-S3-005` 已 `ACCEPTED`，`RGEN-S3-002` / `RGEN-S3-003` / `RGEN-S3-004` / `RGEN-S3-006` 保持开放。
 - Stage 3 round-03（`stage3-main/round-03-review-fix`）：implementation commit `9776bd0a6ef374f5046db261f0e0fac147b01a89`，reviewed head `dc7a4d0f383c82f01cbc5a33a7fa91b1b22f11f3`。Review response 已存在并返回 `REQUEST CHANGES`，处置结果包含 `RGEN-S3-002` / `RGEN-S3-003` / `RGEN-S3-007` residual；transport 结果为 `SESSION_LOST`，未持久化 `assistant_output`，formal source 为 Maintainer-attended browser readback。该记录不构成 Stage 3 acceptance。
@@ -167,7 +168,7 @@ SESSION_LOST -> DISARMED
 - PR trigger envelope 仅含 6 个动态定位字段 + 固定指令；commit-only envelope 在此基础上增加 `target_kind` / `target_id`。两种 envelope 都**绝不内嵌 handoff 正文**；reviewer 凭 locator 与 `reviewed head` 在远端读 commit / handoff。开源仓库经 commit 取证是不可动摇的基础。
 - PR 模式下，`target_pr` 必须指向**当前 open、正在审的 PR**，`reviewed_head` 落在该 PR 的 diff 作用域内；不得指向已 merge 的 PR。commit-only 模式不要求 `target_pr` 或 open PR，但必须使用已定义的 `target_kind` / `target_id` contract，并以 `full_ref` + `reviewed_head` 完成远端取证。PR 状态和 PR-head equality 检查属于 **caller-side orchestration preflight**（由 Repo Agent 在触发 `request_review` 前经 GitHub API 独立验证），不是 native host / helper / transport 的 fail-closed 不变量。
 - fail-closed（transport 层）：path escape / hash mismatch / detached HEAD / 缺 session，均中止于 dispatch 前。
-- `TURN_IDLE` 只描述 transport 完成；Stage 1/Stage 2 的 v1 PR-comment mode 以 GitHub readback 为 formal verdict 来源。当前 Stage 3 acceptance review 由 Maintainer 明确授权 commit-only pilot 使用完整 `assistant_output` 作为本轮验收的 formal source；该 pilot 不代表一般可用性，只有 Stage 3 acceptance 后才成为对外契约。commit-only capture 必须遵守本 spec 的“Assistant turn capture 与 review completion”模型。
+- `TURN_IDLE` 只描述 transport 完成；PR-comment mode 以 GitHub readback 为 formal verdict 来源，commit-only relay-only mode 以完整 `assistant_output` + SHA-256 为 formal verdict。commit-only capture 必须遵守本 spec 的“Assistant turn capture 与 review completion”模型。
 - v1 PR 模式的 handoff 路径正则、relay-export 字段与 `scope_sha256 == sha256(canonical_json(normalized_scope))` 约束保持兼容；Stage 3 为 commit-only 模式增加对应的路径形态、target identity 字段和 schema version 规则。
 
 ## 授权与轮次（按 Stage 独立计数；对齐 producer，不写无条件硬上限）

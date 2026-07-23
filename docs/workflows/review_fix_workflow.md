@@ -9,7 +9,7 @@ repo agent --(handoff + commit + push)--> 远端 (GitHub)
 repo agent --request_review--> relay --dispatch(envelope)--> Chrome ext --> ChatGPT composer
 Stage 1/Stage 2 (v1 PR-comment mode): web reviewer 读远端 commit + handoff --> 评审 --> 完整 verdict 发布到 PR comment
 Stage 1/Stage 2: web reviewer --> 短确认 --> relay 捕获 assistant_output --MCP 回传--> repo agent
-Stage 3 commit-only relay-only mode（仅限 Maintainer 明确授权的 acceptance-review pilot，直至 Stage 3 acceptance）：assistant_output 承载完整 verdict；PR comment 不适用
+commit-only relay-only mode：assistant_output 承载完整 verdict；PR comment 不适用
 ```
 
 ## 轮次模型
@@ -30,14 +30,14 @@ Stage 3 commit-only relay-only mode（仅限 Maintainer 明确授权的 acceptan
 7. 本地校验：`python <helper> relay-export <handoff_path>` 确认 JSON 合法。
 8. 若维护 canonical round ledger，trigger 前先记录本轮 identity、implementation commit 及 review/transport pending；精确 `reviewed_head` 以随后包含该记录的 handoff commit 和 relay-export 为准，不在 commit 正文中自引用预写自身 SHA。结果存在后再追加 verdict、job、transport 与 formal-source facts。
 9. 触发 `request_review(handoff_path=...)`。
-10. PR-comment mode：接收 `TURN_IDLE` 的短 `assistant_output` 作为 transport evidence；随后读取目标 PR comment，按当前 `reviewed_head`、`Review scope` 和预期 actor 核验并解析 formal verdict。commit-only relay-only mode：仅在本轮属于 Maintainer 明确授权的 Stage 3 acceptance-review pilot 时，按 `target_kind` / `target_id` 验证无 PR target，并要求 MCP result 直接返回完整 `assistant_output`（核对首尾 anchor 与 SHA-256）。Stage 3 acceptance 前不得把该 pilot 当作一般调用契约。
-11. PR-comment formal verdict 为 `PASS` → 结束，`REQUEST CHANGES` → 回步骤 1；commit-only relay-only pilot 的完整 `assistant_output` 按同一 verdict parser 处理。如果 web reviewer 页面已完成但 relay 未传回全文，立即停止并请 Maintainer 人工转接，不以 browser readback 替代 transport gate；下一轮 handoff 将该全文传输失败列为首要问题。`HUMAN DECISION REQUIRED` / `COMMENT` → 停止并报告，**不擅自继续**。
+10. PR-comment mode：接收 `TURN_IDLE` 的短 `assistant_output` 作为 transport evidence；随后读取目标 PR comment，按当前 `reviewed_head`、`Review scope` 和预期 actor 核验并解析 formal verdict。commit-only relay-only mode：按 `target_kind` / `target_id` 验证无 PR target，并要求 MCP result 直接返回完整 `assistant_output`（核对首尾 anchor 与 SHA-256）。
+11. PR-comment formal verdict 为 `PASS` → 结束，`REQUEST CHANGES` → 回步骤 1；commit-only relay-only mode 的完整 `assistant_output` 按同一 verdict parser 处理。如果 web reviewer 页面已完成但 relay 未传回全文，立即停止并请 Maintainer 人工转接，不以 browser readback 替代 transport gate；下一轮 handoff 将该全文传输失败列为首要问题。`HUMAN DECISION REQUIRED` / `COMMENT` → 停止并报告，**不擅自继续**。
 
 ## web reviewer 契约
 
 - 凭 envelope 的 `Path` + `reviewed head` 在远端读 handoff 与 commit；不依赖内嵌正文。
 - PR-comment mode：将完整 formal verdict 发布到目标 PR comment；assistant response 只需返回短确认，relay 的 `assistant_output` 作为 transport evidence。
-- Stage 3 commit-only relay-only mode：在 Maintainer 明确授权的 acceptance-review pilot 中不要求 PR comment，完整 verdict 通过 `assistant_output` 作为本轮验收的正式来源；Stage 3 acceptance 后才对外一般可用。
+- commit-only relay-only mode：不要求 PR comment，完整 verdict 通过 `assistant_output` + SHA-256 作为正式来源。
 
 ## 反模式（务必避免）
 
@@ -74,12 +74,6 @@ Stage 3 commit-only handoff 将 `Target PR` 替换为：
 ```markdown
 Target kind: `commit`
 Target ID: `review-security-audit`
-```
-
-Stage 3 acceptance-review pilot handoff 还应明确记录：
-
-```markdown
-Stage 3 pilot authorization: Maintainer-authorized acceptance review; complete commit-only assistant_output is formal source for this gate only.
 ```
 
 ## 指针

@@ -13,7 +13,7 @@
 
 - **两层依赖**：
   - L1 relay transport：零外部依赖，负责返回 transport completion、`assistant_output` 与 SHA-256。
-  - formal verdict source 由 workflow mode 声明：Stage 1/Stage 2 的 v1 PR-comment mode 以目标 PR comment readback 为正式来源，`assistant_output` 只作为非空短确认。Stage 3 acceptance review 期间，只有经 Maintainer 明确授权的 commit-only pilot 才以完整 `assistant_output` 作为本轮验收的 formal source；Stage 3 acceptance 后该规则才对一般调用生效，PR comment 在该模式下不适用。
+  - formal verdict source 由 workflow mode 声明：PR-comment mode 以目标 PR comment readback 为正式来源，`assistant_output` 只作为非空短确认；commit-only relay-only mode 以完整 `assistant_output` + SHA-256 为正式来源，PR comment 不适用。
   - **envelope 构成**：PR mode 保留 6 个动态字段 `handoff_path` / `full_ref` / `reviewed_head` / `review_stream` / `effective_round` / `package_kind` + PR-publication instruction；Stage 3 commit-only mode 在此基础上增加 `target_kind` / `target_id`，并使用 relay-only verdict instruction。两种 mode 都不内嵌 handoff 正文。见 `src/envelope.ts`。
 - **native host 不解析 handoff 正文**：只哈希文件并消费 helper 产出的 relay-export JSON。envelope **不提供正文兜底**——reviewer 必须经 `reviewed head` 在远端读 commit 与 handoff。
 - **PR fingerprint compatibility**：PR mode 的 fingerprint 保持 Stage 3 之前的字段序列 bit-for-bit；只有 commit-only identity 将 `target_kind` / `target_id` 纳入 fingerprint。升级时旧 PR terminal/active/MISMATCH job 必须继续命中同一 persisted row。
@@ -24,7 +24,7 @@
 | 角色 | 职责 | 不做什么 |
 |---|---|---|
 | repo agent | 写 handoff、commit、**push**、触发 `request_review`、解析 verdict、按 findings 改文档 | 不替 reviewer 下结论 |
-| web reviewer | 读 `Path` + target identity + `reviewed head`、评审；PR mode 发布 formal verdict 到目标 PR comment 并回短确认，Maintainer-authorized Stage 3 commit-only pilot 直接回完整 verdict | 不依赖 envelope 内嵌正文 |
+| web reviewer | 读 `Path` + target identity + `reviewed head`、评审；PR mode 发布 formal verdict 到目标 PR comment 并回短确认，commit-only mode 直接回完整 verdict | 不依赖 envelope 内嵌正文 |
 | native host | 校验 relay-export、哈希 handoff、dispatch、捕获 `assistant_output`、fail-closed | 不解析 handoff Markdown 语义 |
 | repository helper | 解析 handoff header fields、校验 path/header/git 状态、算 hash、输出 relay-export JSON | 不接触浏览器 / 网络 |
 

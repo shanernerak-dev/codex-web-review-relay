@@ -65,20 +65,20 @@
 Relay 本身是**纯 localhost 传输**——无云端依赖，relay 进程从不联系 GitHub 或任何远程服务。端到端评审工作流有两层外部依赖：
 
 **第一层——Relay 传输（始终需要，零外部依赖）：**
-Relay 进程通过 MCP 通道（`assistant_output` + SHA-256）返回传输完成结果。正式结论来源取决于 target mode：PR mode 必须从 PR comment readback；当前经授权的 Stage 3 commit-only pilot 使用 reviewer 返回的完整 `assistant_output`。Relay 进程本身没有网络出口。
+Relay 进程通过 MCP 通道（`assistant_output` + SHA-256）返回传输完成结果。正式结论来源取决于 target mode：PR mode 必须从 PR comment readback；commit-only relay-only mode 使用 reviewer 返回的完整 `assistant_output`。Relay 进程本身没有网络出口。
 
 Transport diagnostics 由 native host 写入安装时配置的固定 `diagnosticLogPath`（默认安装为 `review-relay.events.jsonl`）。`diagnosticLogLevel` 可设为 `off`、`error`、`info`、`debug` 或 `trace`；大小与保留数由 `diagnosticLogMaxBytes`、`diagnosticLogRetainedFiles` 控制。默认 `info` 会保留每个 lifecycle request、native delivery 与 ACK 边界。缓冲事件保留 source timestamp、sequence、event ID、binding generation 与 document identity；stale sender 会被拒绝，重复 event ID 在进程内及 query 时去重。Diagnostic queue 只在 correlated `DIAGNOSTIC_ACK` 明确返回 `persisted=true`（`appended` 或已持久化的 `duplicate`），或明确返回 terminal disposition `filtered` 后删除；缺失、false 或错误类型的 ACK 会保留 queued event。Diagnostic I/O 严格 best-effort，不得阻断 review lifecycle。Trigger acceptance 与 exact user-turn receipt 已解耦；防御窗口分别为 native trigger acceptance 30 秒、DOM receipt 60 秒。Review 失败后，应先按其 `job_id` 调用 `get_review_diagnostics` 再判断原因。日志只含经过审查的 primitive metadata、ID、长度和 hash，不记录 token、cookie、handoff/envelope 正文、完整 conversation 或 assistant output。
 
 **第二层——GitHub PR comment 作为正式记录（可选）：**
-对于 PR mode，PR comment 是正式结论记录，reviewer 必须发布并 read back。只有明确授权的 commit-only acceptance pilot 可以不使用 PR comment，此时完整的 relay `assistant_output` 仅作为该验收 gate 的正式来源。无需 PR 的审计可通过保留 handoff 文件和 relay 的持久化 job 记录（SQLite）实现。
+对于 PR mode，PR comment 是正式结论记录，reviewer 必须发布并 read back。commit-only relay-only mode 不使用 PR comment，完整的 relay `assistant_output` 是其正式来源。无需 PR 的审计可通过保留 handoff 文件和 relay 的持久化 job 记录（SQLite）实现。
 
 | 场景 | 需要 PR？ | 需要平台连接器？ | 说明 |
 |------|----------|-----------------|------|
-| commit-only relay 结论（Stage 3 pilot） | 否 | reviewer 仍需具备 reviewed commit/handoff 的读取权限 | 在明确授权的验收 handoff 中，完整结论通过 MCP `assistant_output` 返回；公开仓库通常可由 Web 读取，私有仓库需要相应权限或预加载可信材料。 |
+| commit-only relay 结论 | 否 | reviewer 仍需具备 reviewed commit/handoff 的读取权限 | 完整结论通过 MCP `assistant_output` 返回；公开仓库通常可由 Web 读取，私有仓库需要相应权限或预加载可信材料。 |
 | PR comment（自动发布，任何仓库） | 是 | 是 | ChatGPT 必须绑定 [GitHub App](https://chatgpt.com/gpts) 连接器（或对应平台连接器）以读取 PR 内容并发布评论。公开仓库可通过网页读取，但自动发布评论仍需连接器。 |
 | PR comment（手动） | 是 | 否 | 评审者在对话中回复，你手动将结论复制到 PR comment。无需连接器。 |
 
-**可用性说明：** 当前 commit-only relay-only 正式结论仍是本仓库 Stage 3 acceptance-review 中由 Maintainer 明确授权的 pilot。只有在 handoff 明确属于该验收 pilot 时，完整 `assistant_output` 才可作为正式来源；Stage 3 acceptance 后才面向一般仓库使用。
+**可用性说明：** commit-only relay-only 正式结论现已一般可用。使用 `target_kind=commit`、稳定的 `target_id` 与 commit-only handoff path；完整 `assistant_output` 及其 SHA-256 构成正式结论记录。
 
 **简言之：**
 - **最小传输配置**：localhost relay 进程不需要平台账号；但 reviewer 仍需读取远端 commit 和 handoff，除非预先加载可信材料。
@@ -255,7 +255,7 @@ CREATED -> DISPATCHED -> USER_TURN_ACKED -> ASSISTANT_STARTED -> TURN_IDLE
 
 **手动恢复**：只有 `recover_review(handoff_path, confirm_unsent=true)` 才能在终态 `MISMATCH` 后重新 dispatch。这是一次性审计操作——仅在确认原始消息确实未发送后使用。
 
-`TURN_IDLE` 表示浏览器传输结束。必须按 `target_kind` 分支处理正式结论：`pr` 的 `assistant_output` 只是短的 transport confirmation，Agent 必须 read back PR comment，并核对 actor、reviewed head 与 scope；在明确授权的 Stage 3 acceptance pilot 中，`commit` 的 `assistant_output` 才是完整正式结论，SHA-256 用于完整性校验。不要把 PR mode 的 `assistant_output` 当成正式结论解析。
+`TURN_IDLE` 表示浏览器传输结束。必须按 `target_kind` 分支处理正式结论：`pr` 的 `assistant_output` 只是短的 transport confirmation，Agent 必须 read back PR comment，并核对 actor、reviewed head 与 scope；`commit` 的 `assistant_output` 是完整正式结论，SHA-256 用于完整性校验。不要把 PR mode 的 `assistant_output` 当成正式结论解析。
 
 ## Review-Fix 轮次限制
 
@@ -346,7 +346,7 @@ Review scope: <评审者应关注的内容>
 <你的内容>
 ```
 
-**Native host** 不解析 handoff 正文——它只消费 helper 产出的 relay-export JSON。**Helper** 负责解析和验证 handoff header fields。PR mode 保留六个动态字段和 PR-comment instruction；Stage 3 commit-only acceptance pilot 额外携带 `Target kind` / `Target ID`，并要求将完整正式结论返回到 `assistant_output`，不要求 PR comment；Stage 3 acceptance 后才面向一般使用。
+**Native host** 不解析 handoff 正文——它只消费 helper 产出的 relay-export JSON。**Helper** 负责解析和验证 handoff header fields。PR mode 保留六个动态字段和 PR-comment instruction；commit-only mode 额外携带 `Target kind` / `Target ID`，并要求将完整正式结论返回到 `assistant_output`，不要求 PR comment。
 
 commit-only mode 的 handoff 格式：
 

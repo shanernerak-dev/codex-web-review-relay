@@ -67,20 +67,20 @@ This relay automates steps 2-3 while keeping **you in control**: you manually op
 The relay itself is **localhost-only transport** — it has no cloud dependency and never contacts GitHub or any remote service. The end-to-end review workflow has two layers of external dependency:
 
 **Layer 1 — Relay transport (always required, zero external dependency):**
-The relay process returns transport completion through the MCP channel (`assistant_output` + SHA-256). The formal verdict source depends on the target mode: PR mode requires PR-comment readback; the currently authorized Stage 3 commit-only pilot uses the complete `assistant_output` returned by the reviewer. The relay process itself has no network egress.
+The relay process returns transport completion through the MCP channel (`assistant_output` + SHA-256). The formal verdict source depends on the target mode: PR mode requires PR-comment readback; commit-only relay-only mode uses the complete `assistant_output` returned by the reviewer. The relay process itself has no network egress.
 
 Transport diagnostics are written by the native host to the fixed `diagnosticLogPath` configured at install time (default installation: `review-relay.events.jsonl`). Set `diagnosticLogLevel` to `off`, `error`, `info`, `debug`, or `trace`; size and retention are controlled by `diagnosticLogMaxBytes` and `diagnosticLogRetainedFiles`. The default `info` level retains every lifecycle request/native-delivery/ACK boundary. Buffered events preserve source timestamp, sequence, event ID, binding generation, and document identity; stale senders are rejected and duplicate event IDs are deduplicated both in-process and at query time. A diagnostic queue entry is removed only after a correlated `DIAGNOSTIC_ACK` reports either `persisted=true` (`appended` or already-persisted `duplicate`) or the explicit terminal disposition `filtered`; missing, false, or wrong-type ACKs retain the queued event. Diagnostic I/O is strictly best-effort and cannot block review lifecycle processing. Trigger acceptance is independent of the exact user-turn receipt; defensive limits are 30 seconds for native trigger acceptance and 60 seconds for DOM receipt. After a failed review, call `get_review_diagnostics` with its `job_id` before diagnosing the cause. Logs contain reviewed primitive metadata, IDs, lengths, and hashes only—not tokens, cookies, handoff/envelope bodies, full conversations, or assistant output.
 
 **Layer 2 — GitHub PR comment as formal record (optional):**
-For PR mode, the PR comment is the formal verdict record and requires the reviewer to publish/read it back. It is optional only for an explicitly authorized commit-only acceptance pilot, where the complete relay `assistant_output` is the formal source for that gate. Auditability without a PR can be achieved by retaining the handoff file and the relay's persisted job record (SQLite).
+For PR mode, the PR comment is the formal verdict record and requires the reviewer to publish/read it back. Commit-only relay-only mode does not use a PR comment; the complete relay `assistant_output` is its formal source. Auditability without a PR can be achieved by retaining the handoff file and the relay's persisted job record (SQLite).
 
 | Scenario | PR required? | Platform connector required? | Notes |
 |----------|-------------|------------------------------|-------|
-| Commit-only relay verdict (Stage 3 pilot) | No | Reviewer still needs read access to the reviewed commit/handoff | In an explicitly authorized acceptance handoff, the complete verdict is returned via MCP `assistant_output`; public repositories may be readable on the web, while private repositories need matching access or preloaded trusted material. |
+| Commit-only relay verdict | No | Reviewer still needs read access to the reviewed commit/handoff | The complete verdict is returned via MCP `assistant_output`; public repositories may be readable on the web, while private repositories need matching access or preloaded trusted material. |
 | PR comment (automated, any repo) | Yes | Yes | ChatGPT must have the [GitHub App](https://chatgpt.com/gpts) connector (or equivalent platform connector) bound to read PR content and post comments. Public repos can be read via web, but automated comment posting still requires the connector. |
 | PR comment (manual) | Yes | No | Reviewer reads the PR via web and you manually copy the verdict to a PR comment. No connector needed. |
 
-**Availability note:** commit-only relay-only formal verdicts are currently a Maintainer-authorized Stage 3 acceptance-review pilot in this repository. Treat the complete `assistant_output` as formal only for an explicitly authorized acceptance handoff; general repository use begins after Stage 3 acceptance.
+**Availability note:** commit-only relay-only formal verdicts are generally available. Use `target_kind=commit`, a stable `target_id`, and the commit-only handoff path; the complete `assistant_output` plus its SHA-256 is the formal verdict record.
 
 **In short:**
 - **Minimum transport setup**: no platform account is needed by the localhost relay process. The reviewer still needs to read the remote commit and handoff, unless trusted material is preloaded.
@@ -257,7 +257,7 @@ CREATED -> DISPATCHED -> USER_TURN_ACKED -> ASSISTANT_STARTED -> TURN_IDLE
 
 **Manual recovery**: only `recover_review(handoff_path, confirm_unsent=true)` can re-dispatch after a terminal `MISMATCH`. This is a one-shot, audited operation — use it only after confirming the original message was never sent.
 
-`TURN_IDLE` means the browser transport finished. Branch formal-verdict handling by `target_kind`: for `pr`, `assistant_output` is only a short transport confirmation and the agent must read back the PR comment, checking actor, reviewed head, and scope; for `commit`, an explicitly authorized Stage 3 acceptance pilot treats `assistant_output` as the complete formal verdict and its SHA-256 as the integrity check. Do not parse PR-mode `assistant_output` as the formal verdict.
+`TURN_IDLE` means the browser transport finished. Branch formal-verdict handling by `target_kind`: for `pr`, `assistant_output` is only a short transport confirmation and the agent must read back the PR comment, checking actor, reviewed head, and scope; for `commit`, `assistant_output` is the complete formal verdict and its SHA-256 is the integrity check. Do not parse PR-mode `assistant_output` as the formal verdict.
 
 ## Review-Fix Round Limiting
 
@@ -348,7 +348,7 @@ Review scope: <what the reviewer should look at>
 <your content here>
 ```
 
-The **native host** does not parse the handoff body — it only consumes the validated relay-export JSON produced by the helper. The **helper** is responsible for parsing and validating the handoff header fields. PR mode keeps the six-field envelope and PR-comment instruction. The Stage 3 commit-only acceptance pilot adds `Target kind` / `Target ID` and instructs the reviewer to return the complete formal verdict in `assistant_output` without a PR comment; this becomes generally available only after Stage 3 acceptance.
+The **native host** does not parse the handoff body — it only consumes the validated relay-export JSON produced by the helper. The **helper** is responsible for parsing and validating the handoff header fields. PR mode keeps the six-field envelope and PR-comment instruction. Commit-only mode adds `Target kind` / `Target ID` and instructs the reviewer to return the complete formal verdict in `assistant_output` without a PR comment.
 
 Commit-only handoff format:
 
