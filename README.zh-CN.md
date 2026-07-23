@@ -251,6 +251,8 @@ CREATED -> DISPATCHED -> USER_TURN_ACKED -> ASSISTANT_STARTED -> TURN_IDLE
 
 **可返回 phase**：`request_review` 可能返回任何终态 phase 以及 `SESSION_LOST` 和 `SEND_UNCERTAIN`（当等待切片在 recovery 完成前超时）。调用方应将 `SESSION_LOST` 和 `SEND_UNCERTAIN` 视为可重试——使用相同 handoff 再次调用 `request_review` 将触发自动 reconciliation。
 
+**默认 formal-result 轮询**：确认 dispatch 成功且已观察到发送后，先为深度思考 reviewer 保留 10 分钟的结果观察窗口；仍未得到正式 verdict 时，再按每 5 分钟一次轮询服务端结果。这只是观察节奏，不是 timeout，也不允许因此重复 dispatch；必须保持同一 fingerprint 与 review round。
+
 **同 fingerprint 重试**：幂等。如果 job 仍在 active，调用加入现有等待。如果已终态，立即返回存储的结果。
 
 **手动恢复**：只有 `recover_review(handoff_path, confirm_unsent=true)` 才能在终态 `MISMATCH` 后重新 dispatch。这是一次性审计操作——仅在确认原始消息确实未发送后使用。

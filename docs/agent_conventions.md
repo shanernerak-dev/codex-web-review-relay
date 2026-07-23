@@ -56,6 +56,7 @@
 | terminal | `TURN_IDLE`、`MISMATCH`、`TIMEOUT`、`BLOCKED` |
 
 - **可返回 phase**：terminal + `SESSION_LOST` + `SEND_UNCERTAIN`（等待切片在 recovery 完成前超时）。后两者视为可重试。
+- **Formal verdict polling default**：确认 dispatch 成功且进入 `send-observed` 后，首次服务端 formal-result 观察窗口默认等待 **10 分钟**；首次仍无正式 verdict 时，后续以 **5 分钟**为默认轮询间隔，直到 terminal phase、hard deadline 或 fail-closed 停止条件。首次 10 分钟是深度评审观察窗口，不是 timeout，也不得触发重复 dispatch 或新 round。该默认同时适用于 PR-comment 与 commit-only review；PR-comment 仍必须以 GitHub PR comment 为 formal source。
 - **同 fingerprint 重试幂等**：active 则加入现有等待；terminal 则立即返回存储结果。
 - **手动恢复**：仅 `recover_review(handoff_path, confirm_unsent=true)` 可在 terminal `MISMATCH` 后重 dispatch，一次性，须确认原消息未发送。
 - **`TURN_IDLE`**：表示浏览器 transport completion。PR mode 的 `assistant_output` 只应是非空短确认，formal verdict 必须从目标 PR comment readback；commit-only relay-only mode 的 `assistant_output` 是正式结论，且只能在 dispatch 后新增 assistant turn 已按稳定 DOM identity 完整 harvest、存在可在 reconnect 后复核的 turn-level completion evidence（例如该 turn 的 copy action）、内容保持稳定，并收到 native ACK 后 terminalize。仅观察到一段稳定文本、或曾经观察到 generating，都不是充分证据。`assistant_output_sha256` 仅用于完整性与重试审计，不替代 turn identity。

@@ -253,6 +253,8 @@ CREATED -> DISPATCHED -> USER_TURN_ACKED -> ASSISTANT_STARTED -> TURN_IDLE
 
 **Returnable phases**: `request_review` may return any terminal phase plus `SESSION_LOST` and `SEND_UNCERTAIN` (when the wait slice expires before recovery completes). Callers should treat `SESSION_LOST` and `SEND_UNCERTAIN` as retriable — calling `request_review` again with the same handoff will trigger automatic reconciliation.
 
+**Default formal-result polling**: after dispatch is confirmed and the send is observed, allow a first 10-minute observation window for deep-thinking reviewers. If no formal verdict is available, poll the server-side result every 5 minutes. This is an observation schedule, not a timeout or a reason to dispatch again; keep the same fingerprint and review round.
+
 **Same-fingerprint retry**: idempotent. If the job is still active, the call joins the existing wait. If terminal, the stored result is returned immediately.
 
 **Manual recovery**: only `recover_review(handoff_path, confirm_unsent=true)` can re-dispatch after a terminal `MISMATCH`. This is a one-shot, audited operation — use it only after confirming the original message was never sent.

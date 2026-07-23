@@ -33,6 +33,10 @@ commit-only relay-only mode：assistant_output 承载完整 verdict；PR comment
 10. PR-comment mode：接收 `TURN_IDLE` 的短 `assistant_output` 作为 transport evidence；随后读取目标 PR comment，按当前 `reviewed_head`、`Review scope` 和预期 actor 核验并解析 formal verdict。commit-only relay-only mode：按 `target_kind` / `target_id` 验证无 PR target，并要求 MCP result 直接返回完整 `assistant_output`（核对首尾 anchor 与 SHA-256）。
 11. PR-comment formal verdict 为 `PASS` → 结束，`REQUEST CHANGES` → 回步骤 1；commit-only relay-only mode 的完整 `assistant_output` 按同一 verdict parser 处理。如果 web reviewer 页面已完成但 relay 未传回全文，立即停止并请 Maintainer 人工转接，不以 browser readback 替代 transport gate；下一轮 handoff 将该全文传输失败列为首要问题。`HUMAN DECISION REQUIRED` / `COMMENT` → 停止并报告，**不擅自继续**。
 
+### 默认监听节奏
+
+确认 dispatch 已成功、页面已进入 `send-observed` 后，第一次不要在短窗口内判定失败，默认等待 10 分钟；若仍无 formal verdict，再改为每 5 分钟轮询一次。该节奏只控制服务端结果观察，不改变 MCP wait slice、hard deadline、job fingerprint 或 review round；任何 active job 都不得因轮询间隔变化而重复 dispatch。
+
 ## web reviewer 契约
 
 - 凭 envelope 的 `Path` + `reviewed head` 在远端读 handoff 与 commit；不依赖内嵌正文。
