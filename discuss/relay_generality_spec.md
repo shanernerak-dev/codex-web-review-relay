@@ -17,6 +17,7 @@
 - Stage 3 round-06（`stage3-main/round-06-review-fix`）：implementation commit `66085b57a96f3eb2425cd3e5322313ef40725da9`，reviewed head `8f6eaf9264249e26654167c797eb587ba592b5f0`。Review response 已存在并返回 `REQUEST CHANGES`；transport 停留在 `DISPATCHED`，未持久化 `assistant_output` / SHA，formal source 为 Maintainer transfer。
 - Stage 3 round-07（`stage3-main/round-07-review-fix`）：implementation commit `6990ec4a3af9d7746164d250977bfac0fd8998ac`，reviewed head `9c53ce969bcb05880b757a212be87fbf48fe165f`。Review response 已存在并返回 `REQUEST CHANGES`，新增 `RGEN-S3-011` 至 `RGEN-S3-014`；transport 结果为 `TIMEOUT / TURN_DEADLINE_EXCEEDED`。完整 diagnostics 事件链为 `trigger_received → monitor_started → trigger_accepted → monitor_finished`，从未出现 `user_turn_observed`，formal source 为 Maintainer transfer。当前修复不得预写 Stage 3 acceptance。
 - Stage 3 round-08（`stage3-main/round-08-review-fix`）：implementation commit `d204c843614ef76c919564c87d4849b86b509b11`，reviewed head `36bbfff58fd2ad57a2d4e53f42b2ea7c25a18e93`。Review response 已存在并返回 `REQUEST CHANGES`，新增 `RGEN-S3-015` 至 `RGEN-S3-018`。Job `5af991b6-4f4f-480c-a40a-c14800de7425` 先在 native 5 秒 acceptance window 内进入 `SEND_UNCERTAIN / NATIVE_DISPATCH_WRITE_FAILED`，但 Web review 随后继续并完成；diagnostics 另记录 `baseline_count=0`、`candidate_count=2`、`exact_match_count=0` 与 `SEND_CLICK_RECEIPT_MISSING`。完整 verdict 由 Maintainer transfer，transport acceptance 失败。后续修复只组合具有同一 stable turn identity 的 user fragments，并将 trigger acceptance 与 exact receipt lifecycle 解耦。
+- Stage 3 round-09（`stage3-main/round-09-review-fix`）：implementation commit `bdec54fd545af7b92b7a37a9dc8d09d526c9ddc9`，reviewed head `8d3792e0b12e4aeed6be04b6b4d21b7db9cb903a`。Job `b9fa3ded-fbc0-401a-bb6a-da68895157c1` 已证明 trigger acceptance 与 receipt wait 成功解耦：`trigger_received → dispatch_started → DISPATCH_TRIGGER_ACCEPTED → trigger_accepted`。但 60 秒后 exact user-turn receipt 仍以 `baseline_count=0`、`candidate_count=2`、`exact_match_count=0` 进入 `SEND_UNCERTAIN / SEND_CLICK_RECEIPT_MISSING`；本轮未形成可由 relay 取回的 formal verdict。该证据将下一步根因收窄到 conversation/turn parser 与 user-turn reconstruction，而非 model 首 token 或 review 思考耗时。
 - 跨仓库适配跟踪：producer `David-JA/single-crystal-stress#44`，用于记录本仓库 generic helper/config 变化对 single-crystal 现有使用方式的影响，并在本 PR 收尾后完成 producer-side readback。
 - Producer-side readback：已使用 producer 当前 `scripts/tools/check_stage_gate_readiness.py` 对历史 tracked handoff 做 v1.0 relay-export readback，exit code `0`；证据与迁移命令已记录在 Issue #44 comment `5045654662`。当前 producer checkout 无 active handoff，Issue 保持 open，等待未来 live handoff 与 companion PR closeout。
 - 关联 PR：本 spec 与全部 stage 改动进入同一个 PR（Stage 1 段 2 创建）。**Stage 3 完成且 README/contract 重新对齐前，PR 必须保持 Draft 状态，禁止 merge。**
@@ -52,6 +53,33 @@ Stage 3 的完整评审回传采用“结构化 turn 提取 + relay completion A
 - `TURN_IDLE` 只在目标 turn 已经出现明确的 turn-level completion evidence、内容在连续轮询中保持稳定，并且 native host 对该 job 返回成功 ACK 后成立。普通文本静默、单独消失的 stop button、代码块的 `Copy code` 按钮或“曾经观察到 generating”均不是充分完成证据。
 - `assistant_output_sha256` 是完整性、去重和 reconnect/retry 审计字段，不负责判断 turn 属于哪一轮，也不要求把 hash 设计成独立的 completion 状态机。若输出尚未完成，hash 只能描述当前快照，不能作为 formal verdict evidence。
 - 如果 lifecycle ACK 返回 `{ok:false}`，extension 必须继续保持可恢复监控或显式进入 recovery；不得把失败响应当作成功并停止 observer。native host 未 ACK 前不得将本次 capture 视为已交付。
+
+#### SyncNos reference 审计后的 parser baseline
+
+仓库内 `SyncNos-Webclipper` reference 已提供可验证的设计，不应再把参考范围缩减为“长文本分块”：
+
+- `chatgpt-collector.ts` 的 `turnKeyOf()` 优先使用 enclosing `data-turn-id`，再回退到 `data-message-id`、`data-testid`、DOM `id`；这是 turn identity，不是正文 hash。
+- `getTurnSkeleton()` 保存 conversation-turn skeleton 的文档顺序；`getTurnWrappers()` 优先枚举 message-level role nodes，同时保留没有 role node 的 turn shell。
+- `harvestMessagesInto()` 以 `(turnKey, message identity / within-turn position)` 跨 pass 去重并保留同一 turn 内的多个 message；`assembleFromCache()` 再按当前 skeleton 顺序重组。
+- `harvestInto()` 与 manual scroll/hydration 流程允许 virtualized shell 在后续 pass hydrate 后补采，避免单次 DOM 快照遗漏历史或尚未 hydration 的内容。
+- `extractMessageFromWrapper()` 与 `chatgpt-markdown.ts` 负责对已定位 message 做完整 text/Markdown extraction，包括换行、代码块和隐藏源码；该 extraction 层不承担 turn 归属或 completion 判断。
+- `runtime-observer.ts` 只提供 DOM 变化触发和 root refresh，不证明某个 turn 已完成；autosave incremental engine 处理 snapshot 增量，不应直接等同于 relay 的 formal completion gate。
+
+因此 relay 必须实现自己的、许可证隔离的最小 `TurnRecord` / `TurnHarvestCache` 数据模型，并让 dispatch receipt、assistant capture 与 reconcile 共用：
+
+```text
+conversation identity
+→ ordered turn skeleton
+→ stable turn identity + role
+→ ordered message fragments
+→ cross-pass harvest/cache
+→ target user turn reconstruction
+→ following assistant turn reconstruction
+→ turn-level completion evidence
+→ complete extraction + native ACK
+```
+
+当前 `extension/dom-adapter.js` 只实现了 same-identity 节点分组和局部文本拼接，尚未实现 skeleton、message-within-turn 顺序与 cross-pass harvest/cache。Round 09 的两个 candidate 是否属于同一 turn 不能由计数证明；下一次真实诊断必须记录每个 candidate 的非正文结构元数据：stable turn key、message identity、role、document-order index、fragment count、canonical length/hash。不得记录 envelope 或 conversation 正文。
 
 ### Evidence-first transport diagnostics
 
@@ -93,7 +121,7 @@ SESSION_LOST -> DISARMED
 
 ## 背景与根因（dry run 结论，作为本 spec 的事实基础）
 
-- 基线 `43c33e4` 的 completion detection 是为"对话只回短确认、verdict 写 PR comment"设计的；该模式下 web agent 对话回复短，1500ms 稳定窗口可正确触发 `TURN_IDLE`。
+- 基线 `43c33e4` 的 completion detection 是为“assistant turn 只承载短确认、verdict 写 PR comment”设计的。短确认只降低了最终 assistant payload 的 extraction 压力，不降低 Web agent 的取证、推理或首 token 等待时间；1500ms 稳定窗口仅在当时受控页面与最终短 payload 上曾跑通，不能据此证明深度评审的首 token 或 turn completion 已被可靠建模。
 - 此前在 companion 上尝试"无 PR + 对话内长评审"，偏离了上述设计包络：长回复被 1500ms 误截断（round1/2）；为治截断而放大窗口并重写完成块后，又出现"不触发→TIMEOUT"的回归（round3–6，state.sqlite 硬证据：`assistant_output=null`）。
 - 此前失败应拆成**两个独立根因**：
   1. **Remote commit availability**：`reviewed_head` 或 handoff 尚未 push 到远端，导致 web agent 经 GitHub connector 做 commit 取证时 404。Open PR 不是读取已 push commit 的必要条件——只要 commit 在远端可达即可。
