@@ -17,8 +17,8 @@ const STRING_FIELDS = new Set([
   "turn_id", "role", "state", "sha256", "event_id", "source_timestamp",
   "binding_generation", "document_id", "turn_key_sha256", "fragment_key_sha256", "classification",
 ]);
-const INTEGER_FIELDS = new Set(["attempt", "count", "length", "sequence", "tab_id", "candidate_count", "exact_match_count", "baseline_count", "turn_index", "fragment_index", "fragment_count", "byte_length"]);
-const BOOLEAN_FIELDS = new Set(["connected", "generating", "response_idle", "quiet", "stable", "completion_observed"]);
+const INTEGER_FIELDS = new Set(["attempt", "count", "length", "sequence", "tab_id", "ownership_generation", "candidate_count", "exact_match_count", "baseline_count", "turn_index", "fragment_index", "fragment_count", "byte_length"]);
+const BOOLEAN_FIELDS = new Set(["connected", "generating", "response_idle", "quiet", "stable", "completion_observed", "content_observed", "fragment_extracted"]);
 
 export interface DiagnosticEvent {
   timestamp: string;

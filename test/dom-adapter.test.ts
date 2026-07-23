@@ -553,7 +553,7 @@ test("turn tracker groups fragments by one generic conversation-turn container",
     },
     closest(selector) { return selector === "[data-testid='conversation-turn']" ? container : null; },
   });
-  const selector = "[data-testid^='conversation-turn-'], [data-testid='conversation-turn']";
+  const selector = "[data-turn-id], [data-testid^='conversation-turn-'], [data-testid='conversation-turn'], [id^='conversation-turn-']";
   const document = fakeDocument(new Map([
     ["[data-message-author-role]", [fragment("a", "analysis"), fragment("b", "verdict")]],
     [selector, [container]],
@@ -585,7 +585,7 @@ test("turn tracker preserves skeleton order while the target user is virtualized
   });
   const user = roleNode(userShell, "user", "user-message", "envelope");
   const assistant = roleNode(assistantShell, "assistant", "assistant-message", "verdict");
-  const selector = "[data-testid^='conversation-turn-'], [data-testid='conversation-turn']";
+  const selector = "[data-turn-id], [data-testid^='conversation-turn-'], [data-testid='conversation-turn'], [id^='conversation-turn-']";
   const map = new Map<string, NodeLike[]>([
     [selector, [userShell, assistantShell]],
     ["[data-message-author-role]", [user, assistant]],
@@ -652,7 +652,7 @@ test("turn tracker keeps outer turn identity separate from inner message identit
       return null;
     },
   });
-  const selector = "[data-testid^='conversation-turn-'], [data-testid='conversation-turn']";
+  const selector = "[data-turn-id], [data-testid^='conversation-turn-'], [data-testid='conversation-turn'], [id^='conversation-turn-']";
   const document = fakeDocument(new Map([
     [selector, [shell]],
     ["[data-message-author-role]", [fragment("message-a", "analysis"), fragment("message-b", "verdict")]],
@@ -682,7 +682,7 @@ test("turn tracker never crosses an unhydrated next-turn shell", () => {
   const user = roleNode(targetShell, "user", "envelope");
   const assistant = roleNode(assistantShell, "assistant", "current verdict");
   const historical = roleNode(historicalShell, "assistant", "historical verdict");
-  const selector = "[data-testid^='conversation-turn-'], [data-testid='conversation-turn']";
+  const selector = "[data-turn-id], [data-testid^='conversation-turn-'], [data-testid='conversation-turn'], [id^='conversation-turn-']";
   const document = fakeDocument(new Map([
     [selector, [targetShell, assistantShell, unknownShell, historicalShell]],
     ["[data-message-author-role]", [user, assistant, historical]],
@@ -690,4 +690,39 @@ test("turn tracker never crosses an unhydrated next-turn shell", () => {
   const tracker = adapter.createTurnTracker(document, false);
   const target = adapter.findTrackedUserTurn(document, tracker, "envelope", true);
   assert.throws(() => adapter.trackedAssistantTurnsAfter(document, tracker, target), /TURN_BOUNDARY_UNHYDRATED/);
+});
+
+test("turn tracker treats data-turn-id and approved DOM id shells as unhydrated boundaries", () => {
+  const selector = "[data-turn-id], [data-testid^='conversation-turn-'], [data-testid='conversation-turn'], [id^='conversation-turn-']";
+  for (const kind of ["data-turn-id", "id"]) {
+    const shell = (value: string) => node({
+      getAttribute(name) { return name === kind ? value : null; },
+      closest(query) {
+        if (kind === "data-turn-id" && query === "[data-turn-id]") return this;
+        if (kind === "id" && query === "[id^='conversation-turn-']") return this;
+        return null;
+      },
+    });
+    const userShell = shell(kind === "id" ? "conversation-turn-user" : "user");
+    const unknownShell = shell(kind === "id" ? "conversation-turn-unknown" : "unknown");
+    const historicalShell = shell(kind === "id" ? "conversation-turn-history" : "history");
+    const roleNode = (container: NodeLike, role: string, text: string) => node({
+      role, innerText: text,
+      getAttribute(name) { return name === "data-message-author-role" ? role : null; },
+      closest(query) {
+        if (kind === "data-turn-id" && query === "[data-turn-id]") return container;
+        if (kind === "id" && query === "[id^='conversation-turn-']") return container;
+        return null;
+      },
+    });
+    const user = roleNode(userShell, "user", "envelope");
+    const historical = roleNode(historicalShell, "assistant", "historical verdict");
+    const document = fakeDocument(new Map([
+      [selector, [userShell, unknownShell, historicalShell]],
+      ["[data-message-author-role]", [user, historical]],
+    ]));
+    const tracker = adapter.createTurnTracker(document, false);
+    const target = adapter.findTrackedUserTurn(document, tracker, "envelope", true);
+    assert.throws(() => adapter.trackedAssistantTurnsAfter(document, tracker, target), /TURN_BOUNDARY_UNHYDRATED/);
+  }
 });

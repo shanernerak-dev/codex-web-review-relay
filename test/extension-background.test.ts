@@ -103,6 +103,7 @@ function harness() {
     setConversation(value: string) { conversationIdentity = value; },
     setDiagnosticResponse(value: (message: any) => any) { diagnosticResponse = value; },
     diagnosticQueue() { return storage.get("reviewRelayDiagnosticsV1") ?? []; },
+    pendingTerminal() { return storage.get("relayPendingTerminalLifecycleV1") ?? null; },
     respondTo,
   };
 }
@@ -134,8 +135,10 @@ test("extension waits for lifecycle ACK, acknowledges dispatch receipt and recov
   assert.equal(lifecycleSettled, false);
   const idleRequest = firstPort.messages.find((message) => message.type === "TURN_IDLE");
   assert.equal(idleRequest.assistantOutput, "formal verdict output");
+  assert.equal(h.pendingTerminal().type, "TURN_IDLE");
   h.respondTo(firstPort, idleRequest, "EVENT_ACK", {jobId: "job-1", phase: "TURN_IDLE"});
   assert.equal((await lifecycle).ok, true);
+  assert.equal(h.pendingTerminal(), null);
   assert.equal((await h.runtime({kind: "POPUP_STATUS"})).state.activeJobId, null);
 
   await firstPort.onDisconnect.emit();
@@ -306,6 +309,27 @@ test("background rejects a stale content ownership generation without rewriting 
   assert.equal(stale.ok, false);
   assert.equal(stale.errorCode, "LIFECYCLE_OWNERSHIP_MISMATCH");
   assert.equal(nativePort.messages.length, before);
+});
+
+test("background rejects stale-generation diagnostics", async () => {
+  const h = harness();
+  const armResult = h.runtime({kind: "POPUP_ARM"});
+  await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
+  const nativePort = h.ports[0];
+  const armRequest = nativePort.messages.find((message) => message.type === "ARM_SESSION");
+  h.respondTo(nativePort, armRequest, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
+  await armResult;
+  await nativePort.onMessage.emit({
+    schemaVersion: {major: 1, minor: 3}, type: "DISPATCH_TRIGGER", requestId: "dispatch-diagnostic-generation",
+    sessionId: armRequest.sessionId, jobId: "job-diagnostic-generation", envelope: "Path: x",
+    ownershipGeneration: 4, deadline: new Date(Date.now() + 10_000).toISOString(),
+  });
+  const stale = await h.runtime({
+    kind: "DIAGNOSTIC", level: "info", event: "monitor_failed", jobId: "job-diagnostic-generation",
+    ownershipGeneration: 3, details: {error_code: "TURN_BOUNDARY_UNHYDRATED"},
+  });
+  assert.equal(stale.ok, false);
+  assert.equal(stale.errorCode, "DIAGNOSTIC_SENDER_MISMATCH");
 });
 
 test("diagnostic queue is retained for a correlated ACK without persisted evidence", async () => {

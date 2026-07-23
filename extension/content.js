@@ -10,7 +10,8 @@
   function diagnostic(level, event, job, details = {}) {
     const jobId = typeof job === "string" ? job : job?.jobId;
     const bindingGeneration = typeof job === "object" ? job?.bindingGeneration : undefined;
-    void chrome.runtime.sendMessage({kind: "DIAGNOSTIC", level, event, jobId, details, bindingGeneration, documentId: DOCUMENT_ID}).catch(() => {});
+    const ownershipGeneration = typeof job === "object" ? job?.ownershipGeneration : undefined;
+    void chrome.runtime.sendMessage({kind: "DIAGNOSTIC", level, event, jobId, details, bindingGeneration, documentId: DOCUMENT_ID, ownershipGeneration}).catch(() => {});
   }
   async function sendLifecycle(type, job, errorCode = null, assistantOutput = null) {
     diagnostic("info", "lifecycle_requested", job, {message_type: type, ...(errorCode ? {error_code: errorCode} : {}), ...(assistantOutput !== null ? {length: assistantOutput.length} : {})});
@@ -36,6 +37,29 @@
   async function sha256Hex(value) {
     const bytes = new TextEncoder().encode(String(value));
     return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  async function emitStructuralDiagnostics(message, tracker) {
+    if (typeof adapter.trackedTurnObservation !== "function") return {};
+    const evidence = adapter.trackedTurnObservation(document, tracker, message.envelope);
+    const {candidates = [], ...summary} = evidence;
+    const job = {jobId: message.jobId, bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration};
+    for (const candidate of candidates) {
+      diagnostic("info", "turn_candidate_observed", job, {
+        turn_key_sha256: await sha256Hex(candidate.turnKey),
+        fragment_key_sha256: await sha256Hex(candidate.fragmentKey),
+        role: candidate.role,
+        turn_index: candidate.turnIndex,
+        fragment_index: candidate.fragmentIndex,
+        fragment_count: candidate.fragmentCount,
+        length: candidate.canonical.length,
+        byte_length: new TextEncoder().encode(candidate.canonical).length,
+        sha256: await sha256Hex(candidate.canonical),
+        classification: candidate.classification,
+        content_observed: candidate.contentObserved,
+        fragment_extracted: candidate.fragmentExtracted,
+      });
+    }
+    return summary;
   }
 
   function monitor(message, state, userAcked = false, assistantStarted = false) {
@@ -140,6 +164,7 @@
           }
         } while (inspectPending && !settled);
       } catch (error) {
+        await emitStructuralDiagnostics(message, state?.tracker ?? null);
         diagnostic("error", "monitor_failed", job, {error_code: error instanceof Error ? error.message.split(":", 1)[0] : "CONTENT_MONITOR_ERROR"});
         if (Date.now() < job.deadline) {
           setTimeout(() => { void inspect(); }, 250);
@@ -174,35 +199,24 @@
       await sendLifecycleUntilAck("USER_TURN_ACKED", job);
       monitor(message, state, true);
     } catch (error) {
-      const evidence = typeof adapter.trackedTurnObservation === "function"
-        ? adapter.trackedTurnObservation(document, error?.turnTracker ?? null, message.envelope)
+      const summary = typeof adapter.trackedTurnObservation === "function"
+        ? await emitStructuralDiagnostics(message, error?.turnTracker ?? null)
         : (typeof adapter.turnObservation === "function" ? adapter.turnObservation(document, null, message.envelope) : {});
-      const {candidates = [], ...summary} = evidence;
-      for (const candidate of candidates) {
-        diagnostic("info", "turn_candidate_observed", {jobId: message.jobId, bindingGeneration: message.bindingGeneration}, {
-          turn_key_sha256: await sha256Hex(candidate.turnKey),
-          fragment_key_sha256: await sha256Hex(candidate.fragmentKey),
-          role: candidate.role,
-          turn_index: candidate.turnIndex,
-          fragment_index: candidate.fragmentIndex,
-          fragment_count: candidate.fragmentCount,
-          length: candidate.canonical.length,
-          byte_length: new TextEncoder().encode(candidate.canonical).length,
-          sha256: await sha256Hex(candidate.canonical),
-          classification: candidate.classification,
-          content_observed: candidate.contentObserved,
-          fragment_extracted: candidate.fragmentExtracted,
-        });
-      }
       diagnostic("error", "dispatch_receipt_missing", {jobId: message.jobId, bindingGeneration: message.bindingGeneration}, {...summary, error_code: error instanceof Error ? error.message.split(":", 1)[0] : "DISPATCH_FAILED"});
       throw error;
     }
   }
 
   async function runReconcile(message) {
-    const observed = typeof adapter.reconcileTracked === "function"
-      ? adapter.reconcileTracked(document, message.envelope)
-      : adapter.reconcile(document, message.envelope);
+    let observed;
+    try {
+      observed = typeof adapter.reconcileTracked === "function"
+        ? adapter.reconcileTracked(document, message.envelope)
+        : adapter.reconcile(document, message.envelope);
+    } catch (error) {
+      await emitStructuralDiagnostics(message, error?.turnTracker ?? null);
+      throw error;
+    }
     if (observed.state === "user-present") {
       const job = {jobId: message.jobId, deadline: Date.parse(message.deadline), bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration};
       await sendLifecycleUntilAck("USER_TURN_ACKED", job);

@@ -28,7 +28,9 @@
         "SEND_UNCERTAIN",
         "DISARM_SESSION",
         "DIAGNOSTIC_EVENT",
-        "DIAGNOSTIC_ACK"
+        "DIAGNOSTIC_ACK",
+        "DISPATCH_TRIGGER_ACCEPTED",
+        "RECONCILE_TRIGGER_ACCEPTED"
       ]
     },
     "requestId": {"type": "string", "minLength": 1},
@@ -109,12 +111,20 @@
     {
       "if": {
         "properties": {
-          "type": {"enum": ["USER_TURN_ACKED", "ASSISTANT_STARTED", "TURN_IDLE", "TURN_TIMEOUT", "RECONCILE_MISMATCH", "SESSION_LOST", "SEND_UNCERTAIN", "DISPATCH_TRIGGER_ACCEPTED", "RECONCILE_TRIGGER_ACCEPTED"]},
+          "type": {"enum": ["DISPATCH_TRIGGER", "RECONCILE_TRIGGER", "USER_TURN_ACKED", "ASSISTANT_STARTED", "TURN_IDLE", "TURN_TIMEOUT", "RECONCILE_MISMATCH", "SESSION_LOST", "SEND_UNCERTAIN", "DISPATCH_TRIGGER_ACCEPTED", "RECONCILE_TRIGGER_ACCEPTED"]},
           "schemaVersion": {"properties": {"minor": {"minimum": 3}}, "required": ["minor"]}
         },
         "required": ["type", "schemaVersion"]
       },
       "then": {"required": ["ownershipGeneration"]}
+    },
+    {
+      "if": {"properties": {"type": {"enum": ["DISPATCH_TRIGGER", "RECONCILE_TRIGGER"]}}, "required": ["type"]},
+      "then": {"required": ["requestId", "sessionId", "jobId", "fingerprint", "envelope", "envelopeSha256", "reviewMode", "deadline"]}
+    },
+    {
+      "if": {"properties": {"type": {"enum": ["DISPATCH_TRIGGER_ACCEPTED", "RECONCILE_TRIGGER_ACCEPTED"]}}, "required": ["type"]},
+      "then": {"required": ["responseToRequestId", "sessionId", "jobId"]}
     }
   ]
 }

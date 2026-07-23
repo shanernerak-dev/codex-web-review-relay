@@ -78,6 +78,7 @@ export class NativeBridge {
         source_timestamp: message.sourceTimestamp,
         sequence: message.sequence,
         binding_generation: message.bindingGeneration,
+        ownership_generation: message.ownershipGeneration,
         document_id: message.documentId,
         tab_id: message.tabId,
       }) ?? "failed";
@@ -98,6 +99,8 @@ export class NativeBridge {
       if (pending.expectedType !== type || pending.sessionId !== requireText(message, "sessionId") || pending.jobId !== requireText(message, "jobId")) {
         throw new Error("NATIVE_OUTBOUND_ACK_MISMATCH");
       }
+      const session = this.requireSession(pending.sessionId);
+      if (peerVersion.major !== session.schema_major || peerVersion.minor !== session.schema_minor) throw new Error("NATIVE_SCHEMA_SESSION_MISMATCH");
       if (!Number.isSafeInteger(message.ownershipGeneration) || message.ownershipGeneration !== pending.ownershipGeneration) {
         throw new Error("JOB_OWNERSHIP_STALE");
       }
@@ -139,7 +142,7 @@ export class NativeBridge {
     let relayOnlyJob = false;
     try { relayOnlyJob = JSON.parse(currentJob.relay_json ?? "{}").target_kind === "commit"; } catch {}
     const ownershipGeneration = Number.isSafeInteger(message.ownershipGeneration) ? message.ownershipGeneration as number : null;
-    if (relayOnlyJob && peerVersion.minor >= 3 && ownershipGeneration === null) throw new Error("NATIVE_MESSAGE_INVALID:ownershipGeneration");
+    if (relayOnlyJob && ownershipGeneration === null) throw new Error("NATIVE_MESSAGE_INVALID:ownershipGeneration");
     if (ownershipGeneration !== null && ownershipGeneration !== currentJob.ownership_generation) {
       throw new Error("JOB_OWNERSHIP_STALE");
     }
@@ -149,8 +152,9 @@ export class NativeBridge {
       const ownedExpired = currentJob.session_id === sessionId;
       if ((!active || active.session_id !== sessionId) && !ownedExpired) throw new Error("SESSION_NOT_ARMED");
     } else {
-      this.requireSession(sessionId);
-      if (relayOnlyJob && peerVersion.minor >= 3 && currentJob.session_id !== sessionId) throw new Error("JOB_OWNERSHIP_STALE");
+      const session = this.requireSession(sessionId);
+      if (peerVersion.major !== session.schema_major || peerVersion.minor !== session.schema_minor) throw new Error("NATIVE_SCHEMA_SESSION_MISMATCH");
+      if (relayOnlyJob && currentJob.session_id !== sessionId) throw new Error("JOB_OWNERSHIP_STALE");
     }
     const phaseByType = {
       USER_TURN_ACKED: "USER_TURN_ACKED",

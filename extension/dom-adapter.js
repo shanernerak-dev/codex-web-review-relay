@@ -4,6 +4,7 @@
   const SEND_SELECTOR = "[data-testid='send-button']";
   const STOP_SELECTOR = "[data-testid='stop-button']";
   const TURN_SELECTOR = "[data-message-author-role]";
+  const OUTER_TURN_SELECTOR = "[data-turn-id], [data-testid^='conversation-turn-'], [data-testid='conversation-turn'], [id^='conversation-turn-']";
   function normalizedText(node) {
     const value = typeof node.value === "string" ? node.value : (node.innerText ?? node.textContent ?? "");
     return String(value).replace(/\u00a0/g, " ").replace(/\r\n?/g, "\n")
@@ -58,6 +59,7 @@
     const outerTurn = node?.closest?.("[data-turn-id]")
       ?? node?.closest?.("[data-testid^='conversation-turn-']")
       ?? node?.closest?.("[data-testid='conversation-turn']")
+      ?? node?.closest?.("[id^='conversation-turn-']")
       ?? null;
     const containers = outerTurn ? [outerTurn] : [node?.closest?.("[data-message-id]") ?? null].filter(Boolean);
     for (const container of containers) {
@@ -255,9 +257,7 @@
     if (role === "user") return node.querySelector(".whitespace-pre-wrap");
     return node.querySelector(".markdown.prose") ?? node.querySelector(".markdown");
   }
-  function turnShells(document) {
-    return Array.from(document.querySelectorAll("[data-testid^='conversation-turn-'], [data-testid='conversation-turn']"));
-  }
+  function turnShells(document) { return Array.from(document.querySelectorAll(OUTER_TURN_SELECTOR)); }
   function mergeObservedOrder(previous, observed) {
     const merged = previous.slice();
     if (merged.length === 0) return observed.slice();
@@ -427,13 +427,13 @@
     const users = records.filter((record) => record.role === "user");
     const exact = users.filter((record) => turnRecordText(record) === envelope.trim());
     const candidates = [];
-    users.forEach((record) => {
+    records.forEach((record) => {
       const turnIndex = tracker.order.indexOf(record.key);
       const fragments = orderedFragments(record);
       if (fragments.length === 0) candidates.push({
         turnKey: typeof record.identity === "string" ? record.identity : `generic-turn:${turnIndex}`,
         fragmentKey: "record:no-fragment",
-        role: record.role,
+        role: record.role ?? "unknown",
         turnIndex,
         fragmentIndex: 0,
         fragmentCount: 0,
@@ -445,7 +445,7 @@
       fragments.forEach((fragment, fragmentIndex) => candidates.push({
         turnKey: typeof record.identity === "string" ? record.identity : `generic-turn:${turnIndex}`,
         fragmentKey: fragment.key,
-        role: record.role,
+        role: record.role ?? "unknown",
         turnIndex,
         fragmentIndex,
         fragmentCount: fragments.length,

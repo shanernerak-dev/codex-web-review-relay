@@ -7,6 +7,7 @@ const DIAGNOSTIC_KEY = "reviewRelayDiagnosticsV1";
 const DIAGNOSTIC_LIMIT = 256;
 const SESSION_KEY = "relaySession";
 const PENDING_LOSS_KEY = "relayPendingSessionLossV1";
+const PENDING_TERMINAL_KEY = "relayPendingTerminalLifecycleV1";
 const MAX_RECONNECT_ATTEMPTS = 5;
 let port = null;
 let armed = null;
@@ -59,6 +60,7 @@ function diagnostic(level, event, fields = {}, component = "extension-background
       level, component, event, sessionId: armed?.sessionId, jobId: fields.job_id, details: fields,
       eventId: uuid(), sourceTimestamp: new Date().toISOString(), sequence,
       bindingGeneration: armed?.bindingGeneration, documentId: armed?.documentId, tabId: armed?.tabId,
+      ownershipGeneration: fields.ownership_generation ?? armed?.ownershipGeneration,
     });
     await chrome.storage.local.set({[DIAGNOSTIC_KEY]: queue.slice(-DIAGNOSTIC_LIMIT)});
     await flushDiagnostics();
@@ -123,6 +125,12 @@ async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = nu
     return;
   }
   diagnostic("info", "lifecycle_send", {job_id: jobId, message_type: type, ...(errorCode ? {error_code: errorCode} : {}), ...(assistantOutput !== null ? {length: assistantOutput.length} : {})});
+  const terminal = ["TURN_IDLE", "TURN_TIMEOUT", "RECONCILE_MISMATCH", "SEND_UNCERTAIN"].includes(type);
+  if (terminal) {
+    await chrome.storage.local.set({[PENDING_TERMINAL_KEY]: {
+      type, jobId, errorCode, assistantOutput, sessionId: current.sessionId, ownershipGeneration,
+    }});
+  }
   const response = await nativeRequest(type, {sessionId: current.sessionId, jobId, ownershipGeneration, ...(errorCode ? {errorCode} : {}), ...(assistantOutput !== null ? {assistantOutput} : {})});
   diagnostic("info", "lifecycle_acked", {job_id: jobId, message_type: type});
   if (["TURN_IDLE", "SEND_UNCERTAIN", "BLOCKED", "MISMATCH", "TIMEOUT"].includes(response?.phase) && armed?.sessionId === current.sessionId) {
@@ -130,6 +138,7 @@ async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = nu
     armed.state = "ARMED";
     await persistArmed();
   }
+  if (terminal) await chrome.storage.local.remove(PENDING_TERMINAL_KEY);
 }
 async function validateSavedBinding(saved) {
   if (!saved?.manualArm || saved.expiresAt <= Date.now() || !Number.isInteger(saved.tabId)) throw new Error("SAVED_SESSION_INVALID");
@@ -145,7 +154,17 @@ async function rearmSaved(saved) {
   armed = {...saved, activeJobId: saved.activeJobId ?? null, state: saved.activeJobId ? "ACTIVE" : "ARMED", connection: "connected", lastError: null};
   reconnectAttempts = 0; reconnectDisabled = false; startHeartbeat();
   diagnosticOperation = diagnosticOperation.then(flushDiagnostics, flushDiagnostics).catch(() => {});
+  void deliverPendingTerminalLifecycle();
   return result;
+}
+async function deliverPendingTerminalLifecycle() {
+  const item = (await chrome.storage.local.get(PENDING_TERMINAL_KEY))[PENDING_TERMINAL_KEY];
+  if (!item?.type || !item?.jobId || !armed || item.sessionId !== armed.sessionId) return;
+  try {
+    await sendLifecycle(item.type, item.jobId, item.errorCode, item.assistantOutput, item.ownershipGeneration);
+  } catch {
+    setTimeout(() => { void deliverPendingTerminalLifecycle(); }, 1_000);
+  }
 }
 function scheduleReconnect() {
   if (reconnectTimer !== null || reconnectDisabled || !armed) return;
@@ -264,11 +283,12 @@ async function disarm() {
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (message.kind === "DIAGNOSTIC") {
     if (!armed || armed.state !== "ACTIVE" || sender?.tab?.id !== armed.tabId || message.jobId !== armed.activeJobId
-      || message.bindingGeneration !== armed.bindingGeneration || message.documentId !== armed.documentId) {
+      || message.bindingGeneration !== armed.bindingGeneration || message.documentId !== armed.documentId
+      || !Number.isSafeInteger(message.ownershipGeneration) || message.ownershipGeneration !== armed.ownershipGeneration) {
       respond({ok: false, errorCode: "DIAGNOSTIC_SENDER_MISMATCH"});
       return;
     }
-    diagnostic(message.level ?? "debug", message.event ?? "content_event", {...(message.details ?? {}), job_id: message.jobId}, "extension-content");
+    diagnostic(message.level ?? "debug", message.event ?? "content_event", {...(message.details ?? {}), job_id: message.jobId, ownership_generation: message.ownershipGeneration}, "extension-content");
     respond({ok: true});
     return;
   }
@@ -304,3 +324,4 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 });
 void restoreSavedSession();
 void deliverPendingSessionLoss();
+void deliverPendingTerminalLifecycle();

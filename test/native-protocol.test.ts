@@ -190,6 +190,10 @@ test("relay-only requires v1.3 ownership generation and exact persisted owner", 
   const owned = store.bindJobSession(job.job_id, "current");
   bridge.markDispatchWritten(job.job_id);
   assert.throws(() => bridge.handleInbound({
+    schemaVersion: {major: 1, minor: 2}, type: "USER_TURN_ACKED", requestId: "downgraded",
+    sessionId: "current", jobId: job.job_id,
+  }), /NATIVE_SCHEMA_SESSION_MISMATCH|NATIVE_MESSAGE_INVALID:ownershipGeneration/);
+  assert.throws(() => bridge.handleInbound({
     schemaVersion: NATIVE_SCHEMA_VERSION, type: "USER_TURN_ACKED", requestId: "missing-generation",
     sessionId: "current", jobId: job.job_id,
   }), /NATIVE_MESSAGE_INVALID:ownershipGeneration/);
