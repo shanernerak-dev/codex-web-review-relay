@@ -120,11 +120,29 @@
     },
     {
       "if": {"properties": {"type": {"enum": ["DISPATCH_TRIGGER", "RECONCILE_TRIGGER"]}}, "required": ["type"]},
-      "then": {"required": ["requestId", "sessionId", "jobId", "fingerprint", "envelope", "envelopeSha256", "reviewMode", "deadline"]}
+      "then": {"required": ["requestId", "sessionId", "jobId", "fingerprint", "envelope", "envelopeSha256", "deadline"]}
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {"enum": ["DISPATCH_TRIGGER", "RECONCILE_TRIGGER"]},
+          "schemaVersion": {"properties": {"minor": {"minimum": 1}}, "required": ["minor"]}
+        },
+        "required": ["type", "schemaVersion"]
+      },
+      "then": {"required": ["reviewMode"]}
     },
     {
       "if": {"properties": {"type": {"enum": ["DISPATCH_TRIGGER_ACCEPTED", "RECONCILE_TRIGGER_ACCEPTED"]}}, "required": ["type"]},
       "then": {"required": ["responseToRequestId", "sessionId", "jobId"]}
+    },
+    {
+      "if": {"properties": {"type": {"enum": ["USER_TURN_ACKED", "ASSISTANT_STARTED", "TURN_IDLE", "TURN_TIMEOUT", "RECONCILE_MISMATCH", "SESSION_LOST", "SEND_UNCERTAIN"]}}, "required": ["type"]},
+      "then": {"required": ["requestId", "sessionId", "jobId"]}
+    },
+    {
+      "if": {"properties": {"type": {"const": "TURN_IDLE"}}, "required": ["type"]},
+      "then": {"required": ["assistantOutput"]}
     }
   ]
 }

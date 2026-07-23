@@ -62,6 +62,23 @@ test("native v1.3 schema accepts actual extension diagnostics messages", () => {
     jobId: "048af8d5-acf9-47c6-9448-2c85918710f7", ownershipGeneration: 2,
   }));
   assert.throws(() => validate({...triggerBase, type: "DISPATCH_TRIGGER", ownershipGeneration: undefined}));
+  assert.doesNotThrow(() => validate({
+    schemaVersion: {major: 1, minor: 0}, type: "DISPATCH_TRIGGER", requestId: "legacy-trigger",
+    sessionId: "session", jobId: "048af8d5-acf9-47c6-9448-2c85918710f7",
+    fingerprint: "a".repeat(64), envelope: "Path: x", envelopeSha256: "b".repeat(64),
+    deadline: "2026-07-23T08:00:00.000Z",
+  }));
+  for (const type of ["USER_TURN_ACKED", "ASSISTANT_STARTED", "TURN_TIMEOUT", "RECONCILE_MISMATCH", "SESSION_LOST", "SEND_UNCERTAIN"]) {
+    assert.doesNotThrow(() => validate({
+      schemaVersion: {major: 1, minor: 3}, type, requestId: `event-${type}`,
+      sessionId: "session", jobId: "048af8d5-acf9-47c6-9448-2c85918710f7", ownershipGeneration: 2,
+    }));
+  }
+  assert.doesNotThrow(() => validate({
+    schemaVersion: {major: 1, minor: 3}, type: "TURN_IDLE", requestId: "idle-valid",
+    sessionId: "session", jobId: "048af8d5-acf9-47c6-9448-2c85918710f7",
+    ownershipGeneration: 2, assistantOutput: "Verdict: PASS",
+  }));
   assert.throws(() => validate({
     schemaVersion: {major: 1, minor: 3}, type: "DIAGNOSTIC_ACK", responseToRequestId: "diag",
   }));

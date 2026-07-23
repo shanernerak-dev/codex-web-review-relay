@@ -189,7 +189,7 @@
   }
 
   async function runDispatch(message) {
-    diagnostic("info", "dispatch_started", {jobId: message.jobId, bindingGeneration: message.bindingGeneration});
+    diagnostic("info", "dispatch_started", {jobId: message.jobId, bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration});
     try {
       const state = typeof adapter.dispatchTracked === "function"
         ? await adapter.dispatchTracked(document, message.envelope)
@@ -202,7 +202,7 @@
       const summary = typeof adapter.trackedTurnObservation === "function"
         ? await emitStructuralDiagnostics(message, error?.turnTracker ?? null)
         : (typeof adapter.turnObservation === "function" ? adapter.turnObservation(document, null, message.envelope) : {});
-      diagnostic("error", "dispatch_receipt_missing", {jobId: message.jobId, bindingGeneration: message.bindingGeneration}, {...summary, error_code: error instanceof Error ? error.message.split(":", 1)[0] : "DISPATCH_FAILED"});
+      diagnostic("error", "dispatch_receipt_missing", {jobId: message.jobId, bindingGeneration: message.bindingGeneration, ownershipGeneration: message.ownershipGeneration}, {...summary, error_code: error instanceof Error ? error.message.split(":", 1)[0] : "DISPATCH_FAILED"});
       throw error;
     }
   }

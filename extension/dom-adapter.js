@@ -403,23 +403,33 @@
   }
   function reconcileTracked(document, envelope) {
     const tracker = createTurnTracker(document, false);
-    const userRecord = findTrackedUserTurn(document, tracker, envelope, true);
-    if (userRecord) {
-      const assistantRecords = trackedAssistantTurnsAfter(document, tracker, userRecord);
-      return {state: "user-present", tracker, userRecord, assistantRecords};
+    try {
+      const userRecord = findTrackedUserTurn(document, tracker, envelope, true);
+      if (userRecord) {
+        const assistantRecords = trackedAssistantTurnsAfter(document, tracker, userRecord);
+        return {state: "user-present", tracker, userRecord, assistantRecords};
+      }
+      let draftExact = false;
+      try { draftExact = normalizedText(composer(document)) === envelope.trim(); } catch {}
+      return {state: draftExact ? "draft-unsent" : "missing", tracker};
+    } catch (error) {
+      if (error && typeof error === "object") error.turnTracker = tracker;
+      throw error;
     }
-    let draftExact = false;
-    try { draftExact = normalizedText(composer(document)) === envelope.trim(); } catch {}
-    return {state: draftExact ? "draft-unsent" : "missing", tracker};
   }
   async function resumeDraftTracked(document, envelope) {
     const input = composer(document);
     if (normalizedText(input) !== envelope.trim()) throw new Error("RECONCILE_DRAFT_MISMATCH");
     const tracker = createTurnTracker(document, true);
-    const button = await waitFor(document, () => sendButton(document), "SEND_BUTTON_ENABLE_TIMEOUT");
-    button.click();
-    const userRecord = await waitFor(document, () => findTrackedUserTurn(document, tracker, envelope), "SEND_CLICK_RECEIPT_MISSING", 60_000);
-    return {tracker, input, button, userRecord};
+    try {
+      const button = await waitFor(document, () => sendButton(document), "SEND_BUTTON_ENABLE_TIMEOUT");
+      button.click();
+      const userRecord = await waitFor(document, () => findTrackedUserTurn(document, tracker, envelope), "SEND_CLICK_RECEIPT_MISSING", 60_000);
+      return {tracker, input, button, userRecord};
+    } catch (error) {
+      if (error && typeof error === "object") error.turnTracker = tracker;
+      throw error;
+    }
   }
   function trackedTurnObservation(document, tracker, envelope) {
     try { harvestTurnTracker(document, tracker); } catch {}

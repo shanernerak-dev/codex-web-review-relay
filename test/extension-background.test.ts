@@ -332,6 +332,34 @@ test("background rejects stale-generation diagnostics", async () => {
   assert.equal(stale.errorCode, "DIAGNOSTIC_SENDER_MISMATCH");
 });
 
+test("a fallback terminal cannot overwrite the durable authoritative terminal", async () => {
+  const h = harness();
+  const armResult = h.runtime({kind: "POPUP_ARM"});
+  await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
+  const nativePort = h.ports[0];
+  const armRequest = nativePort.messages.find((message) => message.type === "ARM_SESSION");
+  h.respondTo(nativePort, armRequest, "SESSION_ARMED", {leaseExpiresAt: new Date(Date.now() + 30_000).toISOString()});
+  await armResult;
+  await nativePort.onMessage.emit({
+    schemaVersion: {major: 1, minor: 3}, type: "DISPATCH_TRIGGER", requestId: "dispatch-terminal",
+    sessionId: armRequest.sessionId, jobId: "job-terminal", envelope: "Path: x",
+    ownershipGeneration: 5, deadline: new Date(Date.now() + 10_000).toISOString(),
+  });
+  const idlePromise = h.runtime({kind: "LIFECYCLE", type: "TURN_IDLE", jobId: "job-terminal", ownershipGeneration: 5, assistantOutput: "formal verdict"});
+  await waitFor(() => nativePort.messages.some((message) => message.type === "TURN_IDLE"));
+  assert.equal(h.pendingTerminal().type, "TURN_IDLE");
+  const fallbackPromise = h.runtime({kind: "LIFECYCLE", type: "TURN_TIMEOUT", jobId: "job-terminal", ownershipGeneration: 5});
+  await waitFor(() => nativePort.messages.filter((message) => message.type === "TURN_IDLE").length === 2);
+  assert.equal(h.pendingTerminal().type, "TURN_IDLE");
+  assert.equal(nativePort.messages.some((message) => message.type === "TURN_TIMEOUT"), false);
+  for (const request of nativePort.messages.filter((message) => message.type === "TURN_IDLE")) {
+    h.respondTo(nativePort, request, "EVENT_ACK", {jobId: "job-terminal", phase: "TURN_IDLE"});
+  }
+  assert.equal((await idlePromise).ok, true);
+  assert.equal((await fallbackPromise).ok, true);
+  assert.equal(h.pendingTerminal(), null);
+});
+
 test("diagnostic queue is retained for a correlated ACK without persisted evidence", async () => {
   const h = harness();
   const armResult = h.runtime({kind: "POPUP_ARM"});

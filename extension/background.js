@@ -127,6 +127,10 @@ async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = nu
   diagnostic("info", "lifecycle_send", {job_id: jobId, message_type: type, ...(errorCode ? {error_code: errorCode} : {}), ...(assistantOutput !== null ? {length: assistantOutput.length} : {})});
   const terminal = ["TURN_IDLE", "TURN_TIMEOUT", "RECONCILE_MISMATCH", "SEND_UNCERTAIN"].includes(type);
   if (terminal) {
+    const existing = (await chrome.storage.local.get(PENDING_TERMINAL_KEY))[PENDING_TERMINAL_KEY];
+    if (existing?.jobId === jobId && existing.type !== type) {
+      return sendLifecycle(existing.type, existing.jobId, existing.errorCode, existing.assistantOutput, existing.ownershipGeneration);
+    }
     await chrome.storage.local.set({[PENDING_TERMINAL_KEY]: {
       type, jobId, errorCode, assistantOutput, sessionId: current.sessionId, ownershipGeneration,
     }});

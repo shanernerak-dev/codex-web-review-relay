@@ -181,6 +181,16 @@ export class NativeBridge {
       }
     }
     const errorCode = typeof message.errorCode === "string" && message.errorCode.length > 0 ? message.errorCode : null;
+    const terminalPhases = new Set(["TURN_IDLE", "MISMATCH", "TIMEOUT", "BLOCKED"]);
+    if (terminalPhases.has(current.phase) && terminalPhases.has(phase) && current.phase !== phase) {
+      return {
+        schemaVersion: NATIVE_SCHEMA_VERSION,
+        type: "EVENT_ACK",
+        responseToRequestId: requestId ?? undefined,
+        jobId,
+        phase: current.phase,
+      };
+    }
     const job = current.phase === phase ? current : this.coordinator.transition(jobId, phase, errorCode);
     return {
       schemaVersion: NATIVE_SCHEMA_VERSION,

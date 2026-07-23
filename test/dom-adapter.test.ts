@@ -726,3 +726,33 @@ test("turn tracker treats data-turn-id and approved DOM id shells as unhydrated 
     assert.throws(() => adapter.trackedAssistantTurnsAfter(document, tracker, target), /TURN_BOUNDARY_UNHYDRATED/);
   }
 });
+
+test("reconcile parser errors retain the structural tracker", () => {
+  const selector = "[data-turn-id], [data-testid^='conversation-turn-'], [data-testid='conversation-turn'], [id^='conversation-turn-']";
+  const userShell = node({
+    getAttribute(name) { return name === "data-turn-id" ? "user" : null; },
+    closest(query) { return query === "[data-turn-id]" ? this : null; },
+  });
+  const unknownShell = node({
+    getAttribute(name) { return name === "data-turn-id" ? "unknown" : null; },
+    closest(query) { return query === "[data-turn-id]" ? this : null; },
+  });
+  const historicalShell = node({
+    getAttribute(name) { return name === "data-turn-id" ? "history" : null; },
+    closest(query) { return query === "[data-turn-id]" ? this : null; },
+  });
+  const roleNode = (container: NodeLike, role: string, text: string) => node({
+    role, innerText: text,
+    getAttribute(name) { return name === "data-message-author-role" ? role : null; },
+    closest(query) { return query === "[data-turn-id]" ? container : null; },
+  });
+  const document = fakeDocument(new Map([
+    [selector, [userShell, unknownShell, historicalShell]],
+    ["[data-message-author-role]", [roleNode(userShell, "user", "envelope"), roleNode(historicalShell, "assistant", "history")]],
+  ]));
+  let caught: any = null;
+  try { adapter.reconcileTracked(document, "envelope"); } catch (error) { caught = error; }
+  assert.match(caught?.message, /TURN_BOUNDARY_UNHYDRATED/);
+  assert.ok(caught?.turnTracker);
+  assert.ok(adapter.trackedTurnObservation(document, caught.turnTracker, "envelope").candidates.length >= 2);
+});
