@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import vm from "node:vm";
+import { webcrypto } from "node:crypto";
 
 async function waitFor(predicate: () => boolean, timeout = 2_000): Promise<void> {
   const deadline = Date.now() + timeout;
@@ -23,6 +24,7 @@ function harness(ackDelayMs = 0) {
   let codeCopy = false;
   let generating = false;
   let turnIdleAckFailures = 0;
+  let userTurnAckFailures = 0;
   const runtimeListeners: Array<(message: any, sender: any, respond: (value: any) => void) => boolean | void> = [];
   let observerCallback: (() => void) | null = null;
   class MutationObserver {
@@ -53,6 +55,7 @@ function harness(ackDelayMs = 0) {
         lifecycleMessages.push(message);
         if (ackDelayMs) await new Promise((resolveWait) => setTimeout(resolveWait, ackDelayMs));
         if (message.type === "TURN_IDLE" && turnIdleAckFailures > 0) { turnIdleAckFailures -= 1; return {ok: false, errorCode: "NATIVE_NOT_READY"}; }
+        if (message.type === "USER_TURN_ACKED" && userTurnAckFailures > 0) { userTurnAckFailures -= 1; return {ok: false, errorCode: "NATIVE_NOT_READY"}; }
         return {ok: true};
       },
       onMessage: {addListener(listener: any) { runtimeListeners.push(listener); }},
@@ -60,6 +63,7 @@ function harness(ackDelayMs = 0) {
   };
   const context = vm.createContext({
     chrome,
+    crypto: webcrypto,
     MutationObserver,
     ReviewRelayDomAdapter: adapter,
     globalThis: null,
@@ -111,6 +115,7 @@ function harness(ackDelayMs = 0) {
     setAssistantCodeCopy(value: boolean) { codeCopy = value; },
     setGenerating(value: boolean) { generating = value; },
     failNextTurnIdleAcks(value: number) { turnIdleAckFailures = value; },
+    failNextUserTurnAcks(value: number) { userTurnAckFailures = value; },
   };
 }
 
@@ -276,6 +281,13 @@ test("content monitor retries TURN_IDLE after a rejected native ACK", async () =
   h.mutate();
   await waitFor(() => h.lifecycleMessages.filter((entry) => entry.type === "TURN_IDLE").length >= 2, 7_000);
   assert.equal(h.lifecycleMessages.filter((entry) => entry.type === "TURN_IDLE").at(-1)?.assistantOutput, "formal verdict after retry");
+});
+
+test("content monitor keeps observing after a rejected USER_TURN_ACKED", async () => {
+  const h = harness();
+  h.failNextUserTurnAcks(1);
+  assert.equal((await h.dispatch(9_000, "relay-only")).ok, true);
+  assert.ok(h.lifecycleMessages.filter((entry) => entry.type === "USER_TURN_ACKED").length >= 2);
 });
 
 test("expired dispatch and recovery fail before any DOM write or click", async () => {

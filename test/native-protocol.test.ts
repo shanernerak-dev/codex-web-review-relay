@@ -11,6 +11,7 @@ import { NativeMessageDecoder, encodeNativeMessage } from "../src/native-framing
 import { NativeBridge, NATIVE_SCHEMA_VERSION } from "../src/native-protocol.ts";
 import { relayFingerprint } from "../src/relay-contract.ts";
 import { relayFixture } from "./fixtures.ts";
+import { DiagnosticLogger } from "../src/diagnostic-log.ts";
 
 test("native framing handles partial and multiple messages", () => {
   const first = encodeNativeMessage({value: 1});
@@ -65,6 +66,27 @@ test("native bridge correlates session and lifecycle events", () => {
   assert.equal(store.getJob(job.job_id).result, "completed");
   assert.equal(store.getJob(job.job_id).assistant_output, "formal verdict output");
   assert.equal(store.getJob(job.job_id).assistant_output_sha256, sha256("formal verdict output"));
+  store.close();
+  rmSync(root, {recursive: true, force: true});
+});
+
+test("diagnostic filesystem failure cannot block TURN_IDLE persistence or ACK", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-native-log-failure-"));
+  const store = new JobStore(join(root, "state.sqlite"));
+  const coordinator = new JobCoordinator(store);
+  const diagnostics = new DiagnosticLogger(root, "trace", 65_536, 2);
+  const bridge = new NativeBridge(coordinator, 60_000, diagnostics);
+  const relay = relayFixture();
+  const fingerprint = relayFingerprint(relay);
+  const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm", sessionId: "session", extensionVersion: "0.2.4"});
+  bridge.markDispatchWritten(job.job_id);
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "USER_TURN_ACKED", requestId: "user", sessionId: "session", jobId: job.job_id});
+  bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ASSISTANT_STARTED", requestId: "assistant", sessionId: "session", jobId: job.job_id});
+  assert.equal(diagnostics.write("info", "native-host", "lifecycle_native_received", {job_id: job.job_id}), false);
+  const ack = bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "TURN_IDLE", requestId: "idle", sessionId: "session", jobId: job.job_id, assistantOutput: "complete verdict"});
+  assert.equal(ack?.type, "EVENT_ACK");
+  assert.equal(store.getJob(job.job_id).assistant_output_sha256, sha256("complete verdict"));
   store.close();
   rmSync(root, {recursive: true, force: true});
 });

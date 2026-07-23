@@ -41,12 +41,38 @@
     "reviewMode": {"enum": ["pr-comment", "relay-only"]},
     "deadline": {"type": "string", "format": "date-time"},
     "allowUnsentSend": {"type": "boolean"},
-    "capabilities": {"type": "array", "items": {"type": "string", "enum": ["relay-only-v1"]}},
+    "capabilities": {"type": "array", "items": {"type": "string", "enum": ["relay-only-v1", "diagnostics-v1"]}},
     "errorCode": {"type": "string", "minLength": 1},
     "assistantOutput": {"type": "string", "minLength": 1, "maxLength": 131072},
     "level": {"enum": ["error", "info", "debug", "trace"]},
     "component": {"type": "string", "minLength": 1, "maxLength": 64},
     "event": {"type": "string", "minLength": 1, "maxLength": 96},
-    "details": {"type": "object"}
+    "eventId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "sourceTimestamp": {"type": "string", "format": "date-time"},
+    "sequence": {"type": "integer", "minimum": 0},
+    "bindingGeneration": {"type": "string", "minLength": 1, "maxLength": 160},
+    "documentId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "tabId": {"type": "integer", "minimum": 0},
+    "details": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {"type": "string", "maxLength": 160},
+        "message_type": {"type": "string", "maxLength": 160},
+        "phase": {"type": "string", "maxLength": 160},
+        "error_code": {"type": "string", "maxLength": 160},
+        "state": {"type": "string", "maxLength": 160},
+        "length": {"type": "integer", "minimum": 0},
+        "count": {"type": "integer", "minimum": 0},
+        "candidate_count": {"type": "integer", "minimum": 0},
+        "exact_match_count": {"type": "integer", "minimum": 0},
+        "baseline_count": {"type": "integer", "minimum": 0},
+        "generating": {"type": "boolean"},
+        "response_idle": {"type": "boolean"},
+        "quiet": {"type": "boolean"},
+        "stable": {"type": "boolean"},
+        "completion_observed": {"type": "boolean"}
+      }
+    }
   }
 }

@@ -73,6 +73,12 @@ export class NativeBridge {
         session_id: typeof message.sessionId === "string" ? message.sessionId : undefined,
         job_id: typeof message.jobId === "string" ? message.jobId : undefined,
         request_id: requestId,
+        event_id: message.eventId,
+        source_timestamp: message.sourceTimestamp,
+        sequence: message.sequence,
+        binding_generation: message.bindingGeneration,
+        document_id: message.documentId,
+        tab_id: message.tabId,
       });
       return {
         schemaVersion: NATIVE_SCHEMA_VERSION,

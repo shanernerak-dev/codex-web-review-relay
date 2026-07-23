@@ -6,6 +6,7 @@ const EXTENSION_VERSION = chrome.runtime.getManifest().version;
 const DIAGNOSTIC_KEY = "reviewRelayDiagnosticsV1";
 const DIAGNOSTIC_LIMIT = 256;
 const SESSION_KEY = "relaySession";
+const PENDING_LOSS_KEY = "relayPendingSessionLossV1";
 const MAX_RECONNECT_ATTEMPTS = 5;
 let port = null;
 let armed = null;
@@ -22,6 +23,7 @@ function enqueueSessionOperation(operation) {
 }
 const pending = new Map();
 let diagnosticOperation = Promise.resolve();
+let diagnosticSequence = 0;
 function uuid() { return crypto.randomUUID(); }
 function reconnectDelay(attempt) { return Math.min(8_000, 250 * (2 ** attempt)) + Math.floor(Math.random() * 125); }
 function clearHeartbeat() { if (heartbeat !== null) clearInterval(heartbeat); heartbeat = null; }
@@ -52,7 +54,12 @@ function diagnostic(level, event, fields = {}, component = "extension-background
   diagnosticOperation = diagnosticOperation.then(async () => {
     const stored = await chrome.storage.local.get(DIAGNOSTIC_KEY);
     const queue = Array.isArray(stored[DIAGNOSTIC_KEY]) ? stored[DIAGNOSTIC_KEY] : [];
-    queue.push({level, component, event, sessionId: armed?.sessionId, jobId: fields.job_id, details: fields});
+    const sequence = diagnosticSequence++;
+    queue.push({
+      level, component, event, sessionId: armed?.sessionId, jobId: fields.job_id, details: fields,
+      eventId: uuid(), sourceTimestamp: new Date().toISOString(), sequence,
+      bindingGeneration: armed?.bindingGeneration, documentId: armed?.documentId, tabId: armed?.tabId,
+    });
     await chrome.storage.local.set({[DIAGNOSTIC_KEY]: queue.slice(-DIAGNOSTIC_LIMIT)});
     await flushDiagnostics();
   }).catch(() => {});
@@ -80,7 +87,12 @@ async function onNativeMessage(message) {
   try {
     const page = await chrome.tabs.sendMessage(armed.tabId, {kind: "GET_PAGE_STATE"});
     if (!page?.ok || !page.adapterReady) throw new Error("PAGE_BINDING_DRIFT");
-    const response = await chrome.tabs.sendMessage(armed.tabId, {kind: message.type, jobId: message.jobId, envelope: message.envelope, reviewMode: message.reviewMode, deadline: message.deadline, allowUnsentSend: message.allowUnsentSend});
+    if (page.conversationIdentity !== armed.conversationIdentity || page.documentId !== armed.documentId) throw new Error("PAGE_BINDING_DRIFT");
+    const response = await chrome.tabs.sendMessage(armed.tabId, {
+      kind: message.type, jobId: message.jobId, envelope: message.envelope, reviewMode: message.reviewMode,
+      deadline: message.deadline, allowUnsentSend: message.allowUnsentSend,
+      bindingGeneration: armed.bindingGeneration, documentId: armed.documentId,
+    });
     if (!response?.ok) throw new Error(response?.errorCode ?? "CONTENT_DISPATCH_REJECTED");
     ensurePort().postMessage({schemaVersion: SCHEMA_VERSION, type: `${message.type}_ACCEPTED`, responseToRequestId: message.requestId, sessionId: armed.sessionId, jobId: message.jobId});
     diagnostic("info", "trigger_accepted", {job_id: message.jobId, message_type: message.type});
@@ -103,9 +115,9 @@ async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = nu
     }
     return;
   }
-  diagnostic("debug", "lifecycle_send", {job_id: jobId, message_type: type, ...(errorCode ? {error_code: errorCode} : {}), ...(assistantOutput !== null ? {length: assistantOutput.length} : {})});
+  diagnostic("info", "lifecycle_send", {job_id: jobId, message_type: type, ...(errorCode ? {error_code: errorCode} : {}), ...(assistantOutput !== null ? {length: assistantOutput.length} : {})});
   await nativeRequest(type, {sessionId: current.sessionId, jobId, ...(errorCode ? {errorCode} : {}), ...(assistantOutput !== null ? {assistantOutput} : {})});
-  diagnostic("debug", "lifecycle_acked", {job_id: jobId, message_type: type});
+  diagnostic("info", "lifecycle_acked", {job_id: jobId, message_type: type});
   if (["TURN_IDLE", "SEND_UNCERTAIN", "TURN_TIMEOUT"].includes(type) && armed?.sessionId === current.sessionId) {
     armed.activeJobId = null;
     armed.state = "ARMED";
@@ -117,6 +129,7 @@ async function validateSavedBinding(saved) {
   const page = await chrome.tabs.sendMessage(saved.tabId, {kind: "GET_PAGE_STATE"});
   if (!page?.ok || !page.adapterReady) throw new Error("PAGE_BINDING_DRIFT");
   if (typeof saved.conversationIdentity !== "string" || page.conversationIdentity !== saved.conversationIdentity) throw new Error("PAGE_BINDING_DRIFT");
+  if (typeof saved.documentId !== "string" || page.documentId !== saved.documentId) throw new Error("PAGE_BINDING_DRIFT");
   return page;
 }
 async function rearmSaved(saved) {
@@ -124,7 +137,7 @@ async function rearmSaved(saved) {
   const result = await nativeRequest("ARM_SESSION", {sessionId: saved.sessionId, extensionVersion: EXTENSION_VERSION, capabilities: CAPABILITIES});
   armed = {...saved, activeJobId: saved.activeJobId ?? null, state: saved.activeJobId ? "ACTIVE" : "ARMED", connection: "connected", lastError: null};
   reconnectAttempts = 0; reconnectDisabled = false; startHeartbeat();
-  void flushDiagnostics();
+  diagnosticOperation = diagnosticOperation.then(flushDiagnostics, flushDiagnostics).catch(() => {});
   return result;
 }
 function scheduleReconnect() {
@@ -166,7 +179,12 @@ async function arm() {
     const sessionId = uuid();
     reconnectDisabled = false;
     const result = await nativeRequest("ARM_SESSION", {sessionId, extensionVersion: EXTENSION_VERSION, capabilities: CAPABILITIES});
-    armed = {sessionId, tabId: tab.id, conversationIdentity: state.conversationIdentity, activeJobId: null, state: "ARMED", manualArm: true, connection: "connected", lastError: null, expiresAt: Date.now() + 1_800_000};
+    armed = {
+      sessionId, tabId: tab.id, conversationIdentity: state.conversationIdentity,
+      bindingGeneration: uuid(), documentId: state.documentId,
+      activeJobId: null, state: "ARMED", manualArm: true, connection: "connected",
+      lastError: null, expiresAt: Date.now() + 1_800_000,
+    };
     reconnectAttempts = 0; startHeartbeat();
     await chrome.storage.local.set({[SESSION_KEY]: armed});
     diagnostic("info", "session_armed", {});
@@ -193,9 +211,25 @@ async function invalidateBinding(errorCode) {
   clearHeartbeat();
   await chrome.storage.local.remove(SESSION_KEY);
   if (current.activeJobId) {
-    try { await nativeRequest("SESSION_LOST", {sessionId: current.sessionId, jobId: current.activeJobId, errorCode}); } catch {}
+    await chrome.storage.local.set({[PENDING_LOSS_KEY]: {
+      sessionId: current.sessionId, jobId: current.activeJobId, errorCode,
+      eventId: uuid(), sourceTimestamp: new Date().toISOString(),
+    }});
+    await deliverPendingSessionLoss();
+  } else {
+    try { await nativeRequest("DISARM_SESSION", {sessionId: current.sessionId}); } catch {}
   }
-  try { await nativeRequest("DISARM_SESSION", {sessionId: current.sessionId}); } catch {}
+}
+async function deliverPendingSessionLoss() {
+  const pendingLoss = (await chrome.storage.local.get(PENDING_LOSS_KEY))[PENDING_LOSS_KEY];
+  if (!pendingLoss?.sessionId || !pendingLoss?.jobId) return;
+  try {
+    await nativeRequest("SESSION_LOST", {sessionId: pendingLoss.sessionId, jobId: pendingLoss.jobId, errorCode: pendingLoss.errorCode});
+    await nativeRequest("DISARM_SESSION", {sessionId: pendingLoss.sessionId});
+    await chrome.storage.local.remove(PENDING_LOSS_KEY);
+  } catch {
+    setTimeout(() => { void deliverPendingSessionLoss(); }, 1_000);
+  }
 }
 async function disarm() {
   return enqueueSessionOperation(async () => {
@@ -216,6 +250,11 @@ async function disarm() {
 }
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (message.kind === "DIAGNOSTIC") {
+    if (!armed || armed.state !== "ACTIVE" || sender?.tab?.id !== armed.tabId || message.jobId !== armed.activeJobId
+      || message.bindingGeneration !== armed.bindingGeneration || message.documentId !== armed.documentId) {
+      respond({ok: false, errorCode: "DIAGNOSTIC_SENDER_MISMATCH"});
+      return;
+    }
     diagnostic(message.level ?? "debug", message.event ?? "content_event", {...(message.details ?? {}), job_id: message.jobId}, "extension-content");
     respond({ok: true});
     return;
@@ -225,6 +264,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (armed.state !== "ACTIVE" || !armed.activeJobId) { respond({ok: false, errorCode: "LIFECYCLE_JOB_NOT_ACTIVE"}); return; }
     if (sender?.tab?.id !== armed.tabId) { respond({ok: false, errorCode: "LIFECYCLE_SENDER_TAB_MISMATCH"}); return; }
     if (armed.activeJobId !== message.jobId) { respond({ok: false, errorCode: "LIFECYCLE_JOB_MISMATCH"}); return; }
+    if (message.bindingGeneration !== armed.bindingGeneration || message.documentId !== armed.documentId) { respond({ok: false, errorCode: "LIFECYCLE_BINDING_MISMATCH"}); return; }
+    diagnostic("info", "lifecycle_received", {job_id: message.jobId, message_type: message.type});
     sendLifecycle(message.type, message.jobId, message.errorCode, message.assistantOutput)
       .then(() => respond({ok: true}), (error) => respond({ok: false, errorCode: error.message}));
     return true;
@@ -248,3 +289,4 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   });
 });
 void restoreSavedSession();
+void deliverPendingSessionLoss();

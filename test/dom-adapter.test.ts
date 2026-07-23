@@ -28,6 +28,23 @@ function node(input: Partial<NodeLike> = {}): NodeLike {
 }
 
 function fakeDocument(map: Map<string, NodeLike[]>) {
+  for (const button of map.get("[data-testid='send-button']") ?? []) {
+    if ((button as NodeLike & {receiptWrapped?: boolean}).receiptWrapped) continue;
+    const original = button.click.bind(button);
+    button.click = () => {
+      const composer = [...(map.get("#prompt-textarea") ?? []), ...(map.get("[contenteditable='true'][data-lexical-editor='true']") ?? [])]
+        .find((candidate) => Boolean(candidate.value ?? candidate.innerText ?? candidate.textContent))
+        ?? (map.get("#prompt-textarea") ?? map.get("[contenteditable='true'][data-lexical-editor='true']") ?? [])[0];
+      const text = composer?.value ?? composer?.innerText ?? composer?.textContent ?? "";
+      original();
+      if (text) {
+        let turnNodes = map.get("[data-message-author-role]");
+        if (!turnNodes) { turnNodes = []; map.set("[data-message-author-role]", turnNodes); }
+        turnNodes.push(node({role: "user", innerText: text}));
+      }
+    };
+    (button as NodeLike & {receiptWrapped?: boolean}).receiptWrapped = true;
+  }
   return {
     querySelectorAll(selector: string) { return map.get(selector) ?? []; },
     execCommand() { return false; },
@@ -290,7 +307,7 @@ test("DOM adapter reconciles existing user turn or one exact unsent draft", asyn
   await adapter.resumeDraft(document, "envelope");
   assert.equal(send.clicked, 1);
   input.value = "different";
-  assert.equal(adapter.reconcile(document, "envelope").state, "missing");
+  assert.equal(adapter.reconcile(document, "envelope").state, "user-present");
 });
 
 test("DOM adapter reconciles every ordered assistant turn before the next user", () => {
@@ -363,6 +380,21 @@ test("DOM adapter fails closed when an unstable generic turn is replaced", () =>
   map.set("[data-message-author-role]", [bubble(genericTurn(), "rerendered assistant")]);
   assert.throws(() => adapter.newTurns(fakeDocument(map), baseline, "assistant"), /TURN_IDENTITY_UNSTABLE/);
   assert.throws(() => adapter.newTurn(fakeDocument(map), baseline, "assistant"), /TURN_IDENTITY_UNSTABLE/);
+});
+
+test("DOM adapter accepts a new unstable turn when every unstable baseline node is retained", () => {
+  const genericTurn = () => node({getAttribute(name) { return name === "data-testid" ? "conversation-turn" : null; }});
+  const bubble = (turn: NodeLike, role: string, text: string) => node({
+    role, innerText: text,
+    closest(selector) { return selector === "[data-testid='conversation-turn']" ? turn : null; },
+  });
+  const old = bubble(genericTurn(), "assistant", "old");
+  const map = new Map<string, NodeLike[]>([["[data-message-author-role]", [old]]]);
+  const document = fakeDocument(map);
+  const baseline = adapter.snapshotTurns(document);
+  const appended = bubble(genericTurn(), "assistant", "new");
+  map.set("[data-message-author-role]", [old, appended]);
+  assert.deepEqual(adapter.newTurns(document, baseline, "assistant"), [appended]);
 });
 
 test("DOM adapter does not merge turns through an arbitrary shared ancestor id", () => {

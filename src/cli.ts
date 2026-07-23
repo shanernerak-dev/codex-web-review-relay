@@ -38,10 +38,10 @@ async function nativeHost(): Promise<void> {
   const handleMessage = async (message: unknown) => {
     const record = message !== null && typeof message === "object" && !Array.isArray(message) ? message as Record<string, unknown> : {};
     try {
-      diagnostics.write("debug", "native-host", "message_received", {
+      const response = bridge.handleInbound(message);
+      if (typeof record.type === "string" && record.type !== "DIAGNOSTIC_EVENT") diagnostics.write("info", "native-host", "lifecycle_native_received", {
         session_id: record.sessionId, job_id: record.jobId, request_id: record.requestId, message_type: record.type,
       });
-      const response = bridge.handleInbound(message);
       if (record.type === "ARM_SESSION") await ensureListening();
       if (response) writeNative(response);
     } catch (error) {
@@ -62,7 +62,7 @@ async function nativeHost(): Promise<void> {
   };
   process.stdin.on("data", (chunk: Buffer) => {
     try {
-      for (const message of decoder.push(chunk)) inbound = inbound.then(() => handleMessage(message));
+      for (const message of decoder.push(chunk)) inbound = inbound.then(() => handleMessage(message), () => handleMessage(message));
     } catch (error) {
       const detail = error instanceof Error ? error.message : "NATIVE_HOST_ERROR";
       writeNative({

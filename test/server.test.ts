@@ -7,6 +7,7 @@ import type { RelayConfig } from "../src/config.ts";
 import { JobStore } from "../src/job-store.ts";
 import { createRelayServer, listen, MCP_PROTOCOL_VERSION } from "../src/server.ts";
 import type { ReviewTransportService } from "../src/review-transport.ts";
+import { DiagnosticLogger } from "../src/diagnostic-log.ts";
 
 test("localhost MCP server enforces auth, origin and protocol version", async () => {
   const root = mkdtempSync(join(tmpdir(), "review-relay-server-"));
@@ -30,7 +31,9 @@ test("localhost MCP server enforces auth, origin and protocol version", async ()
     async requestReview(handoffPath: string) { return {job_id: "job-1", handoff_path: handoffPath, phase: "TURN_IDLE"}; },
     async getStatus(input: object) { return {job_id: "job-1", phase: "TURN_IDLE", lookup: input}; },
   } as unknown as ReviewTransportService;
-  const server = createRelayServer(config, token, store, transport);
+  const diagnostics = new DiagnosticLogger(join(root, "events.jsonl"), "info", 65_536, 2);
+  diagnostics.write("info", "extension-content", "user_turn_observed", {job_id: "048af8d5-acf9-47c6-9448-2c85918710f7"});
+  const server = createRelayServer(config, token, store, transport, diagnostics);
   const address = await listen(server, config);
   const base = `http://127.0.0.1:${address.port}`;
   const unauthorized = await fetch(`${base}/health`);
@@ -84,6 +87,13 @@ test("localhost MCP server enforces auth, origin and protocol version", async ()
     body: JSON.stringify({jsonrpc: "2.0", id: 5, method: "tools/call", params: {name: "request_review", arguments: {handoff_path: "x", extra: true}}}),
   });
   assert.equal((await invalidCall.json()).result.structuredContent.error_code, "REQUEST_REVIEW_INPUT_INVALID");
+  const diagnosticCall = await fetch(`${base}/mcp`, {
+    method: "POST",
+    headers: {...headers, "mcp-protocol-version": MCP_PROTOCOL_VERSION},
+    body: JSON.stringify({jsonrpc: "2.0", id: 6, method: "tools/call", params: {name: "get_review_diagnostics", arguments: {job_id: "048af8d5-acf9-47c6-9448-2c85918710f7", limit: 10}}}),
+  });
+  const diagnosticBody = await diagnosticCall.json();
+  assert.equal(diagnosticBody.result.structuredContent.events[0].event, "user_turn_observed");
   const get = await fetch(`${base}/mcp`, {headers: {authorization: `Bearer ${token}`, accept: "text/event-stream"}});
   assert.equal(get.status, 405);
 

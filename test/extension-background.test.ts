@@ -40,6 +40,7 @@ function harness() {
   const ports: ReturnType<typeof port>[] = [];
   const storage = new Map<string, any>();
   let conversationIdentity = "https://chatgpt.com/c/conversation-a";
+  const documentId = "document-a";
   const chrome = {
     runtime: {
       lastError: null,
@@ -55,7 +56,7 @@ function harness() {
     tabs: {
       async query() { return [{id: 7, url: conversationIdentity}]; },
       async sendMessage(_tabId: number, message: any) {
-        if (message.kind === "GET_PAGE_STATE") return {ok: true, adapterReady: true, conversationIdentity};
+        if (message.kind === "GET_PAGE_STATE") return {ok: true, adapterReady: true, conversationIdentity, documentId};
         if (message.kind === "DISPATCH_TRIGGER" || message.kind === "RECONCILE_TRIGGER") return {ok: true};
         throw new Error("UNSUPPORTED_TEST_TAB_MESSAGE");
       },
@@ -72,6 +73,10 @@ function harness() {
   vm.runInContext(readFileSync(resolve("extension/background.js"), "utf8"), context, {filename: "background.js"});
 
   async function runtime(message: any, senderTabId: number | null = message.kind === "LIFECYCLE" ? 7 : null): Promise<any> {
+    if (message.kind === "LIFECYCLE" || message.kind === "DIAGNOSTIC") {
+      const saved = storage.get("relaySession");
+      message = {...message, bindingGeneration: message.bindingGeneration ?? saved?.bindingGeneration, documentId: message.documentId ?? saved?.documentId};
+    }
     const listener = runtimeMessages.listeners[0];
     return new Promise((resolveResponse, rejectResponse) => {
       let responded = false;
@@ -184,6 +189,13 @@ test("disarm refuses to clear a session while a review job is active", async () 
   assert.equal(disarm.error, "ACTIVE_JOB_DISARM_FORBIDDEN");
   assert.equal(nativePort.messages.some((message) => message.type === "DISARM_SESSION"), false);
   assert.equal((await h.runtime({kind: "POPUP_STATUS"})).state.activeJobId, "job-active");
+
+  const staleDiagnostic = await h.runtime({
+    kind: "DIAGNOSTIC", level: "info", event: "user_turn_observed", jobId: "job-active",
+    bindingGeneration: "stale-binding", documentId: "document-a", details: {},
+  });
+  assert.equal(staleDiagnostic.ok, false);
+  assert.equal(staleDiagnostic.errorCode, "DIAGNOSTIC_SENDER_MISMATCH");
 
   const armAgain = await h.runtime({kind: "POPUP_ARM"});
   assert.equal(armAgain.ok, false);

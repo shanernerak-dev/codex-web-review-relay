@@ -49,6 +49,7 @@
   function snapshotTurns(document) {
     const snapshot = new Set(Array.from(document.querySelectorAll(TURN_SELECTOR)));
     snapshot.turnIdentities = new Set(Array.from(snapshot).map(stableTurnIdentity).filter((identity) => typeof identity === "string"));
+    snapshot.unstableTurns = new Set(Array.from(snapshot).filter((node) => typeof stableTurnIdentity(node) !== "string"));
     snapshot.unstableTurnCount = Array.from(snapshot).filter((node) => typeof stableTurnIdentity(node) !== "string").length;
     return snapshot;
   }
@@ -127,13 +128,18 @@
     const identity = stableTurnIdentity(node);
     return typeof identity === "string" && baseline?.turnIdentities?.has?.(identity) === true;
   }
+  function assertUnstableBaselineRetained(document, baseline) {
+    if (!baseline?.unstableTurns || baseline.unstableTurns.size === 0) return;
+    const current = new Set(Array.from(document.querySelectorAll(TURN_SELECTOR)));
+    if (Array.from(baseline.unstableTurns).some((node) => !current.has(node))) throw new Error("TURN_IDENTITY_UNSTABLE");
+  }
   function newTurns(document, baseline, role, exactText) {
     const records = [];
     for (const node of Array.from(document.querySelectorAll(TURN_SELECTOR))) {
       if (isBaselineTurn(node, baseline) || node.getAttribute("data-message-author-role") !== role) continue;
       if (exactText !== undefined && normalizedText(node) !== exactText.trim()) continue;
       const identity = stableTurnIdentity(node);
-      if (typeof identity !== "string" && baseline?.unstableTurnCount > 0) throw new Error("TURN_IDENTITY_UNSTABLE");
+      if (typeof identity !== "string") assertUnstableBaselineRetained(document, baseline);
       const record = identity === null ? null : records.find((candidate) => candidate.identity === identity);
       if (record) record.nodes.push(node);
       else records.push({identity, nodes: [node]});
@@ -169,7 +175,7 @@
   }
   function newTurn(document, baseline, role, exactText) {
     const matches = Array.from(document.querySelectorAll(TURN_SELECTOR)).filter((node) => !isBaselineTurn(node, baseline) && node.getAttribute("data-message-author-role") === role && (exactText === undefined || normalizedText(node) === exactText.trim()));
-    if (baseline?.unstableTurnCount > 0 && matches.some((node) => typeof stableTurnIdentity(node) !== "string")) throw new Error("TURN_IDENTITY_UNSTABLE");
+    if (matches.some((node) => typeof stableTurnIdentity(node) !== "string")) assertUnstableBaselineRetained(document, baseline);
     if (role === "assistant") return oneAssistantTurn(matches);
     if (matches.length > 1) throw new Error(`TURN_IDENTITY_AMBIGUOUS:${role}`);
     return matches[0] ?? null;
@@ -189,12 +195,8 @@
   async function clickAndConfirm(document, state, envelope) {
     const button = await waitFor(document, () => sendButton(document), "SEND_BUTTON_ENABLE_TIMEOUT");
     button.click();
-    await waitFor(document, () => {
-      if (normalizedText(state.input) === "") return true;
-      if (isGenerating(document)) return true;
-      return Boolean(newTurn(document, state.baseline, "user", envelope));
-    }, "SEND_CLICK_RECEIPT_MISSING");
-    return {...state, button};
+    const user = await waitFor(document, () => newTurn(document, state.baseline, "user", envelope), "SEND_CLICK_RECEIPT_MISSING", 10_000);
+    return {...state, button, user};
   }
   async function dispatch(document, envelope) {
     const baseline = snapshotTurns(document);
@@ -226,5 +228,11 @@
     try { composer(document); return true; }
     catch { return false; }
   }
-  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, isAssistantComplete, writeComposer, snapshotTurns, newTurn, newTurns, assistantTurnsAfter, turns, dispatch, reconcile, resumeDraft, isGenerating, isResponseIdle, isIdle};
+  function turnObservation(document, baseline, envelope) {
+    const all = turns(document);
+    const candidates = all.filter((node) => node.getAttribute("data-message-author-role") === "user");
+    const exact = candidates.filter((node) => normalizedText(node) === envelope.trim());
+    return {candidate_count: candidates.length, exact_match_count: exact.length, baseline_count: baseline?.size ?? 0};
+  }
+  scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, isAssistantComplete, writeComposer, snapshotTurns, newTurn, newTurns, assistantTurnsAfter, turns, turnObservation, dispatch, reconcile, resumeDraft, isGenerating, isResponseIdle, isIdle};
 })(globalThis);
