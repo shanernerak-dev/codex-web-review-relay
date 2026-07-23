@@ -188,6 +188,22 @@ test("DOM adapter keeps the last assistant message when one stable turn has mult
   assert.equal(adapter.rawTurnText(document, finalBubble), "reasoning summary\n\nfinal review output");
 });
 
+test("DOM adapter matches one user turn split across multiple DOM bubbles", () => {
+  const turn = node({getAttribute(name) { return name === "data-turn-id" ? "user-turn" : null; }});
+  const fragment = (text: string) => node({
+    role: "user", innerText: text,
+    closest(selector) { return selector === "[data-turn-id]" ? turn : null; },
+  });
+  const first = fragment("Path: x");
+  const second = fragment("full Ref: refs/heads/topic");
+  const map = new Map<string, NodeLike[]>([["[data-message-author-role]", [first, second]]]);
+  const document = fakeDocument(map);
+  assert.equal(adapter.newTurn(document, new Set(), "user", "Path: x\nfull Ref: refs/heads/topic"), second);
+  assert.deepEqual(adapter.turnObservation(document, new Set(), "Path: x\nfull Ref: refs/heads/topic"), {
+    candidate_count: 2, count: 1, exact_match_count: 1, baseline_count: 0,
+  });
+});
+
 test("DOM adapter treats data-message-id as the stable turn identity across node replacement", () => {
   const turnNode = (text: string) => node({
     role: "assistant",

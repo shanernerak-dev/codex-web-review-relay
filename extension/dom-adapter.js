@@ -137,14 +137,17 @@
     const records = [];
     for (const node of Array.from(document.querySelectorAll(TURN_SELECTOR))) {
       if (isBaselineTurn(node, baseline) || node.getAttribute("data-message-author-role") !== role) continue;
-      if (exactText !== undefined && normalizedText(node) !== exactText.trim()) continue;
       const identity = stableTurnIdentity(node);
       if (typeof identity !== "string") assertUnstableBaselineRetained(document, baseline);
       const record = identity === null ? null : records.find((candidate) => candidate.identity === identity);
       if (record) record.nodes.push(node);
       else records.push({identity, nodes: [node]});
     }
-    return records.map((record) => record.nodes[record.nodes.length - 1]);
+    return records.filter((record) => exactText === undefined || normalizedGroupedText(record.nodes) === exactText.trim())
+      .map((record) => record.nodes[record.nodes.length - 1]);
+  }
+  function normalizedGroupedText(nodes) {
+    return nodes.map(normalizedText).filter((text) => text.length > 0).join("\n").trim();
   }
   function findAnchoredTurnIndex(all, anchor) {
     const direct = all.indexOf(anchor);
@@ -174,8 +177,7 @@
     return groupedAssistantTurns(nextUser >= 0 ? tail.slice(0, nextUser) : tail);
   }
   function newTurn(document, baseline, role, exactText) {
-    const matches = Array.from(document.querySelectorAll(TURN_SELECTOR)).filter((node) => !isBaselineTurn(node, baseline) && node.getAttribute("data-message-author-role") === role && (exactText === undefined || normalizedText(node) === exactText.trim()));
-    if (matches.some((node) => typeof stableTurnIdentity(node) !== "string")) assertUnstableBaselineRetained(document, baseline);
+    const matches = newTurns(document, baseline, role, exactText);
     if (role === "assistant") return oneAssistantTurn(matches);
     if (matches.length > 1) throw new Error(`TURN_IDENTITY_AMBIGUOUS:${role}`);
     return matches[0] ?? null;
@@ -231,8 +233,14 @@
   function turnObservation(document, baseline, envelope) {
     const all = turns(document);
     const candidates = all.filter((node) => node.getAttribute("data-message-author-role") === "user");
-    const exact = candidates.filter((node) => normalizedText(node) === envelope.trim());
-    return {candidate_count: candidates.length, exact_match_count: exact.length, baseline_count: baseline?.size ?? 0};
+    const records = [];
+    for (const node of candidates) {
+      const identity = stableTurnIdentity(node);
+      const record = identity === null ? null : records.find((candidate) => candidate.identity === identity);
+      if (record) record.nodes.push(node); else records.push({identity, nodes: [node]});
+    }
+    const exact = records.filter((record) => normalizedGroupedText(record.nodes) === envelope.trim());
+    return {candidate_count: candidates.length, count: records.length, exact_match_count: exact.length, baseline_count: baseline?.size ?? 0};
   }
   scope.ReviewRelayDomAdapter = {pageSupported, composer, sendButton, normalizedText, rawText, rawTurnText, isAssistantComplete, writeComposer, snapshotTurns, newTurn, newTurns, assistantTurnsAfter, turns, turnObservation, dispatch, reconcile, resumeDraft, isGenerating, isResponseIdle, isIdle};
 })(globalThis);
