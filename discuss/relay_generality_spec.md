@@ -11,11 +11,9 @@
 - Stage 2 acceptance：Maintainer 于 2026-07-22 明确批准进入 Stage 3。该 acceptance 不等同于 Stage 3 acceptance、Ready、merge authorization 或 producer Issue closeout。
 - Stage 3 round-01 review：reviewed head `4e77def8253c013e1911c1630060a32f20390867` 返回 `REQUEST CHANGES`，`RGEN-S3-001` 至 `RGEN-S3-005` 已记录；该 handoff 保持 append-only。
 - Stage 3 round-02 review：reviewed head `981c7ce` 返回 `REQUEST CHANGES`；`RGEN-S3-001` / `RGEN-S3-005` 已 `ACCEPTED`，`RGEN-S3-002` / `RGEN-S3-003` / `RGEN-S3-004` / `RGEN-S3-006` 保持开放。
-- Stage 3 canonical review identity：`stage3-main/round-04-evidence-amendment`，reviewed head `1006a6c983f5cb336f226a0e5972c925431d4d4b`；Stage 3 round 独立从 `round-01` 计数。round-04 formal review 已返回 `REQUEST CHANGES`，但 relay transport 为 `TIMEOUT` 且未持久化 `assistant_output`；该 verdict 来自 Maintainer-attended 浏览器 readback，不构成 Stage 3 acceptance。
-- Stage 3 round-03 review handoff：implementation head `9776bd0a6ef374f5046db261f0e0fac147b01a89`，已修复 round-02 的 `RGEN-S3-002` / `RGEN-S3-003` / `RGEN-S3-004` / `RGEN-S3-006`，等待复审。
-- Stage 3 round-03 transport：因浏览器绑定 stale 结束为 `SESSION_LOST`，evidence amendment 保持 `Effective round=3`，未产生 formal verdict。
-- Stage 3 round-04 review handoff：implementation head `084b588`，补充修复 extension `Disarm` / `Arm` session lifecycle，等待复审。
-- Stage 3 round-04 current-head amendment：implementation commit `b5edfe1` 已补齐 round-03 verdict 的 `RGEN-S3-002` / `RGEN-S3-003` / `RGEN-S3-007` residual，并保留 extension lifecycle fix；该 amendment 的 formal review 新增 `RGEN-S3-008`（active job 期间 Disarm 的 lifecycle/recovery 风险）与 `RGEN-S3-009`（canonical round history 与当前 review chain 不一致），历史 handoff 保持 append-only。
+- Stage 3 round-03（`stage3-main/round-03-review-fix`）：implementation commit `9776bd0a6ef374f5046db261f0e0fac147b01a89`，reviewed head `dc7a4d0f383c82f01cbc5a33a7fa91b1b22f11f3`。Review response 已存在并返回 `REQUEST CHANGES`，处置结果包含 `RGEN-S3-002` / `RGEN-S3-003` / `RGEN-S3-007` residual；transport 结果为 `SESSION_LOST`，未持久化 `assistant_output`，formal source 为 Maintainer-attended browser readback。该记录不构成 Stage 3 acceptance。
+- Stage 3 round-04（`stage3-main/round-04-evidence-amendment`）：implementation commit `b5edfe1`，reviewed head `1006a6c983f5cb336f226a0e5972c925431d4d4b`。Review response 已存在并返回 `REQUEST CHANGES`，新增 `RGEN-S3-008`（active session lifecycle）与 `RGEN-S3-009`（canonical round history）；transport 结果为 `TIMEOUT`，未持久化 `assistant_output`，formal source 为 Maintainer-attended browser readback。历史 handoff 保持 append-only。
+- Stage 3 round-05（`stage3-main/round-05-review-fix`）：implementation commit `9542ae3a77eca9a979bd79fe770c7228b9c64545`，reviewed head `441f21b79b2f59f465104876b52fed987d480754`。Review response 已存在并返回 `REQUEST CHANGES`，`RGEN-S3-008` / `RGEN-S3-009` 保持开放并新增 `RGEN-S3-010`（reconcile / turn identity）；transport 结果为 `TIMEOUT / TURN_DEADLINE_EXCEEDED`，未持久化 `assistant_output`，formal source 为 Maintainer-attended browser readback。当前正在修复这些 findings；不得预写 Stage 3 acceptance。
 - 跨仓库适配跟踪：producer `David-JA/single-crystal-stress#44`，用于记录本仓库 generic helper/config 变化对 single-crystal 现有使用方式的影响，并在本 PR 收尾后完成 producer-side readback。
 - Producer-side readback：已使用 producer 当前 `scripts/tools/check_stage_gate_readiness.py` 对历史 tracked handoff 做 v1.0 relay-export readback，exit code `0`；证据与迁移命令已记录在 Issue #44 comment `5045654662`。当前 producer checkout 无 active handoff，Issue 保持 open，等待未来 live handoff 与 companion PR closeout。
 - 关联 PR：本 spec 与全部 stage 改动进入同一个 PR（Stage 1 段 2 创建）。**Stage 3 完成且 README/contract 重新对齐前，PR 必须保持 Draft 状态，禁止 merge。**
@@ -53,6 +51,31 @@ Stage 3 的完整评审回传采用“结构化 turn 提取 + relay completion A
 - 如果 lifecycle ACK 返回 `{ok:false}`，extension 必须继续保持可恢复监控或显式进入 recovery；不得把失败响应当作成功并停止 observer。native host 未 ACK 前不得将本次 capture 视为已交付。
 
 该模型将“完整对话分割”和“评审完成确认”明确分层：前者确保 turn、角色、顺序和内容不遗漏；后者确认这些内容确实属于本次 job、已经停止生成，并已被 native host 接收。
+
+### Extension 单绑定状态机
+
+extension 采用单通道、fail-closed 的手动绑定模型，不尝试在多个 tab、conversation 或 document 之间自动选择和迁移 review job：
+
+```text
+DISARMED
+  -> manual Arm current ChatGPT tab
+ARMED(tabId, sessionId)
+  -> native dispatch(jobId)
+ACTIVE(tabId, sessionId, jobId)
+  -> TURN_IDLE / TIMEOUT
+ARMED(tabId, sessionId)
+
+ACTIVE 或 ARMED
+  -> tab close / navigation / page binding drift
+SESSION_LOST -> DISARMED
+```
+
+- extension 全局同时只允许一个 armed tab 和一个 active job。使用者不得同时绑定两个窗口；已 armed 时再次 Arm 返回 `SESSION_ALREADY_ARMED`，active job 期间返回 `ACTIVE_JOB_ARM_FORBIDDEN`。
+- active job 期间 Disarm 返回 `ACTIVE_JOB_DISARM_FORBIDDEN`。Arm / Disarm 均不得覆盖、清空或重建当前 `jobId`。
+- `activeJobId` 只属于单一 authoritative session state；native port reconnect 可以恢复同一个 session 的通讯，但不得隐式 re-arm 页面、切换 tab、重置 job 或把 stale persisted binding 当作当前页面授权。
+- lifecycle 只在状态为 `ACTIVE`、`sender.tab.id` 等于 armed `tabId`、且 `message.jobId` 等于 active `jobId` 时接收。不存在“`bindingValid=false` 但 lifecycle 仍可继续提交”的中间状态。
+- armed tab 关闭、导航、conversation identity 改变、content script reload 或 adapter drift 时，若有 active job则向 native host 报告一次 `SESSION_LOST`；随后本地 binding 进入 `DISARMED`，必须由使用者在目标页面重新 Arm。旧页面或旧 monitor 的后续 lifecycle 一律返回 `SESSION_NOT_ARMED`。
+- `tabId` 是 native port 不能提供的最小页面定位信息；不再为当前单窗口约束增加 `bindingNonce`、自动 document migration 或多窗口仲裁。turn identity 与 `assistant_output_sha256` 属于 capture / audit 层，不参与 tab binding。
 
 ## 背景与根因（dry run 结论，作为本 spec 的事实基础）
 
