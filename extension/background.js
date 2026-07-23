@@ -117,14 +117,16 @@ async function onNativeMessage(message) {
     await sendLifecycle("SEND_UNCERTAIN", message.jobId, errorCode);
   }
 }
-async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = null, ownershipGeneration = armed?.ownershipGeneration, serialized = false) {
+async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = null, ownershipGeneration = armed?.ownershipGeneration, serialized = false, expectedSessionId = armed?.sessionId) {
   const terminal = ["TURN_IDLE", "TURN_TIMEOUT", "RECONCILE_MISMATCH", "SEND_UNCERTAIN"].includes(type);
   if (terminal && !serialized) {
-    const operation = () => sendLifecycle(type, jobId, errorCode, assistantOutput, ownershipGeneration, true);
+    const operation = () => sendLifecycle(type, jobId, errorCode, assistantOutput, ownershipGeneration, true, expectedSessionId);
     const next = terminalOperation.then(operation, operation);
     terminalOperation = next.catch(() => {});
     return next;
   }
+  if (terminal && serialized && (!armed || armed.sessionId !== expectedSessionId
+    || armed.activeJobId !== jobId || armed.ownershipGeneration !== ownershipGeneration)) return;
   if (!armed) throw new Error("SESSION_NOT_ARMED");
   const current = armed;
   if (type === "SESSION_LOST") {
@@ -140,7 +142,7 @@ async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = nu
   if (terminal) {
     const existing = (await chrome.storage.local.get(PENDING_TERMINAL_KEY))[PENDING_TERMINAL_KEY];
     if (existing?.jobId === jobId && existing.type !== type) {
-      return sendLifecycle(existing.type, existing.jobId, existing.errorCode, existing.assistantOutput, existing.ownershipGeneration, true);
+      return sendLifecycle(existing.type, existing.jobId, existing.errorCode, existing.assistantOutput, existing.ownershipGeneration, true, existing.sessionId);
     }
     await chrome.storage.local.set({[PENDING_TERMINAL_KEY]: {
       type, jobId, errorCode, assistantOutput, sessionId: current.sessionId, ownershipGeneration,
@@ -148,12 +150,20 @@ async function sendLifecycle(type, jobId, errorCode = null, assistantOutput = nu
   }
   const response = await nativeRequest(type, {sessionId: current.sessionId, jobId, ownershipGeneration, ...(errorCode ? {errorCode} : {}), ...(assistantOutput !== null ? {assistantOutput} : {})});
   diagnostic("info", "lifecycle_acked", {job_id: jobId, message_type: type});
-  if (["TURN_IDLE", "SEND_UNCERTAIN", "BLOCKED", "MISMATCH", "TIMEOUT"].includes(response?.phase) && armed?.sessionId === current.sessionId) {
+  if (["TURN_IDLE", "SEND_UNCERTAIN", "BLOCKED", "MISMATCH", "TIMEOUT"].includes(response?.phase)
+    && armed?.sessionId === current.sessionId && armed.activeJobId === jobId
+    && armed.ownershipGeneration === ownershipGeneration) {
     armed.activeJobId = null;
     armed.state = "ARMED";
     await persistArmed();
   }
-  if (terminal) await chrome.storage.local.remove(PENDING_TERMINAL_KEY);
+  if (terminal) {
+    const pendingTerminal = (await chrome.storage.local.get(PENDING_TERMINAL_KEY))[PENDING_TERMINAL_KEY];
+    if (pendingTerminal?.jobId === jobId && pendingTerminal.sessionId === current.sessionId
+      && pendingTerminal.ownershipGeneration === ownershipGeneration) {
+      await chrome.storage.local.remove(PENDING_TERMINAL_KEY);
+    }
+  }
 }
 async function validateSavedBinding(saved) {
   if (!saved?.manualArm || saved.expiresAt <= Date.now() || !Number.isInteger(saved.tabId)) throw new Error("SAVED_SESSION_INVALID");

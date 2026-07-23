@@ -104,6 +104,7 @@ function harness() {
     setDiagnosticResponse(value: (message: any) => any) { diagnosticResponse = value; },
     diagnosticQueue() { return storage.get("reviewRelayDiagnosticsV1") ?? []; },
     pendingTerminal() { return storage.get("relayPendingTerminalLifecycleV1") ?? null; },
+    pendingLoss() { return storage.get("relayPendingSessionLossV1") ?? null; },
     respondTo,
   };
 }
@@ -249,11 +250,12 @@ test("same-tab navigation atomically rejects the old monitor and requires manual
   assert.equal(staleLifecycle.errorCode, "SESSION_NOT_ARMED");
 
   const lost = nativePort.messages.find((message) => message.type === "SESSION_LOST" && message.jobId === "job-navigation");
-  h.respondTo(nativePort, lost, "EVENT_ACK", {jobId: "job-navigation", phase: "SESSION_LOST"});
+  h.respondTo(nativePort, lost, "EVENT_ACK", {jobId: "job-navigation", phase: "TURN_IDLE"});
   await waitFor(() => nativePort.messages.some((message) => message.type === "DISARM_SESSION"));
   const invalidatedDisarm = nativePort.messages.find((message) => message.type === "DISARM_SESSION");
   h.respondTo(nativePort, invalidatedDisarm, "SESSION_DISARMED");
   await navigation;
+  assert.equal(h.pendingLoss(), null);
 
   const rearmResult = h.runtime({kind: "POPUP_ARM"});
   await waitFor(() => nativePort.messages.filter((message) => message.type === "ARM_SESSION").length === 2);
@@ -409,14 +411,12 @@ test("timeout-first terminal admission prevents a later TURN_IDLE overwrite", as
   const first = nativePort.messages.find((message) => message.type === "TURN_TIMEOUT");
   h.respondTo(nativePort, first, "EVENT_ACK", {jobId: "job-timeout-first", phase: "TIMEOUT"});
   assert.equal((await timeout).ok, true);
-  await waitFor(() => nativePort.messages.some((message) => message.type === "TURN_IDLE"));
-  const lateIdle = nativePort.messages.find((message) => message.type === "TURN_IDLE");
-  h.respondTo(nativePort, lateIdle, "EVENT_ACK", {jobId: "job-timeout-first", phase: "TIMEOUT"});
   assert.equal((await idle).ok, true);
+  assert.equal(nativePort.messages.some((message) => message.type === "TURN_IDLE"), false);
   assert.equal(h.pendingTerminal(), null);
 });
 
-test("new ownership generation supersedes a stale pending terminal event", async () => {
+test("new ownership generation supersedes queued stale terminal events", async () => {
   const h = harness();
   const armResult = h.runtime({kind: "POPUP_ARM"});
   await waitFor(() => h.ports.length === 1 && h.ports[0].messages.some((message) => message.type === "ARM_SESSION"));
@@ -429,11 +429,16 @@ test("new ownership generation supersedes a stale pending terminal event", async
     sessionId: armRequest.sessionId, jobId: "job-generation-migration", envelope: "Path: x",
     ownershipGeneration: 1, deadline: new Date(Date.now() + 10_000).toISOString(),
   });
-  void h.runtime({
+  const firstTerminal = h.runtime({
+    kind: "LIFECYCLE", type: "SEND_UNCERTAIN", jobId: "job-generation-migration",
+    ownershipGeneration: 1, errorCode: "SEND_CLICK_RECEIPT_MISSING",
+  });
+  const secondTerminal = h.runtime({
     kind: "LIFECYCLE", type: "SEND_UNCERTAIN", jobId: "job-generation-migration",
     ownershipGeneration: 1, errorCode: "SEND_CLICK_RECEIPT_MISSING",
   });
   await waitFor(() => h.pendingTerminal()?.type === "SEND_UNCERTAIN");
+  assert.equal(nativePort.messages.filter((message) => message.type === "SEND_UNCERTAIN").length, 1);
 
   await nativePort.onMessage.emit({
     schemaVersion: {major: 1, minor: 3}, type: "RECONCILE_TRIGGER", requestId: "reconcile-generation-2",
@@ -445,6 +450,13 @@ test("new ownership generation supersedes a stale pending terminal event", async
     message.type === "RECONCILE_TRIGGER_ACCEPTED"
       && message.responseToRequestId === "reconcile-generation-2"
       && message.ownershipGeneration === 2));
+  const oldTerminal = nativePort.messages.find((message) => message.type === "SEND_UNCERTAIN");
+  h.respondTo(nativePort, oldTerminal, "EVENT_ACK", {jobId: "job-generation-migration", phase: "SEND_UNCERTAIN"});
+  assert.equal((await firstTerminal).ok, true);
+  assert.equal((await secondTerminal).ok, true);
+  assert.equal(nativePort.messages.filter((message) => message.type === "SEND_UNCERTAIN").length, 1);
+  assert.equal(h.pendingTerminal(), null);
+  assert.equal((await h.runtime({kind: "POPUP_STATUS"})).state.activeJobId, "job-generation-migration");
 });
 
 test("diagnostic queue is retained for a correlated ACK without persisted evidence", async () => {

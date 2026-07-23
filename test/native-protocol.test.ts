@@ -344,6 +344,35 @@ test("native bridge acknowledges stale SEND_UNCERTAIN after authoritative recove
   store.close(); rmSync(root, {recursive: true, force: true});
 });
 
+test("SESSION_LOST idempotently cleans authoritative terminals and abandons SEND_UNCERTAIN", () => {
+  for (const currentPhase of ["TURN_IDLE", "MISMATCH", "TIMEOUT", "SEND_UNCERTAIN"] as const) {
+    const root = mkdtempSync(join(tmpdir(), `review-relay-native-loss-${currentPhase.toLowerCase()}-`));
+    const store = new JobStore(join(root, "state.sqlite"));
+    const coordinator = new JobCoordinator(store);
+    const bridge = new NativeBridge(coordinator, 60_000);
+    const relay = relayFixture();
+    const fingerprint = relayFingerprint(relay);
+    const job = store.createOrGetJob(relay, fingerprint, new Date(Date.now() + 60_000)).job;
+    bridge.handleInbound({schemaVersion: NATIVE_SCHEMA_VERSION, type: "ARM_SESSION", requestId: "arm", sessionId: "session-1", extensionVersion: "0.2.13"});
+    store.bindJobSession(job.job_id, "session-1");
+    coordinator.transition(job.job_id, "DISPATCHED");
+    if (currentPhase === "TURN_IDLE") {
+      coordinator.transition(job.job_id, "USER_TURN_ACKED");
+      coordinator.transition(job.job_id, "ASSISTANT_STARTED");
+    }
+    coordinator.transition(job.job_id, currentPhase);
+    const ack = bridge.handleInbound({
+      schemaVersion: NATIVE_SCHEMA_VERSION, type: "SESSION_LOST", requestId: `lost-${currentPhase}`,
+      sessionId: "session-1", jobId: job.job_id, errorCode: "PAGE_CLOSED",
+    });
+    const expected = currentPhase === "SEND_UNCERTAIN" ? "SESSION_LOST" : currentPhase;
+    assert.equal(ack?.phase, expected);
+    assert.equal(store.getJob(job.job_id).phase, expected);
+    store.close();
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
 test("a newly manually armed session can continue the unresolved job", () => {
   const root = mkdtempSync(join(tmpdir(), "review-relay-native-binding-"));
   const store = new JobStore(join(root, "state.sqlite"));
