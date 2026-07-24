@@ -69,7 +69,7 @@ def zip_inventory(path: Path) -> list[str]:
             if name.startswith("/") or "\\" in name or ".." in pure.parts or pure == PurePosixPath("."):
                 raise ValueError(f"ZIP_PATH_INVALID:{name}")
             info = archive.getinfo(name)
-            if info.is_dir() or info.create_system == 3 and (info.external_attr >> 16) & stat.S_IFMT == stat.S_IFLNK:
+            if info.is_dir() or (info.create_system == 3 and ((info.external_attr >> 16) & stat.S_IFMT) == stat.S_IFLNK):
                 raise ValueError(f"ZIP_LINK_OR_DIRECTORY:{name}")
         if len(set(names)) != len(names):
             raise ValueError("ZIP_DUPLICATE_PATH")
@@ -102,8 +102,11 @@ def validate_dist(root: Path, dist: Path) -> dict[str, str]:
         raise ValueError(f"EXTENSION_INVENTORY_MISMATCH:{sorted(extension_names)}")
     with zipfile.ZipFile(extension) as archive:
         manifest = json.loads(archive.read("manifest.json"))
+        source_manifest = json.loads((root / "extension" / "manifest.json").read_text(encoding="utf-8"))
         if manifest.get("version") != PRODUCT_VERSION:
             raise ValueError("EXTENSION_VERSION_MISMATCH")
+        if manifest.get("key") != source_manifest.get("key"):
+            raise ValueError("EXTENSION_KEY_CHANGED")
         if extension_id_from_key(manifest["key"]) != EXTENSION_ID:
             raise ValueError("EXTENSION_ID_DERIVATION_MISMATCH")
         background = archive.read("background.js").decode("utf-8")
@@ -121,6 +124,25 @@ def validate_dist(root: Path, dist: Path) -> dict[str, str]:
         installer = archive.read("scripts/install-native-host.ps1").decode("utf-8")
         if "Join-Path $runtimeRoot 'src\\cli.ts'" not in installer or "repositoryRoot" in installer or "helperPath" in installer:
             raise ValueError("INSTALLER_CONTRACT_MISMATCH")
+
+    machine_paths = {
+        str(root.resolve()).replace("\\", "/").lower().encode("utf-8"),
+        str(root.resolve()).lower().encode("utf-8"),
+    }
+    producer_markers = (b"david-ja/single-crystal-stress", b"single-crystal-stress")
+    for asset in (extension, native):
+        with zipfile.ZipFile(asset) as archive:
+            for name in archive.namelist():
+                lower_name = name.lower()
+                if any(part in {".git", "node_modules"} for part in PurePosixPath(lower_name).parts):
+                    raise ValueError(f"ASSET_HYGIENE_DEVELOPMENT_PATH:{name}")
+                if lower_name.endswith((".sqlite", ".sqlite-shm", ".sqlite-wal", ".log", ".jsonl")) or "bearer-token" in lower_name:
+                    raise ValueError(f"ASSET_HYGIENE_RUNTIME_STATE:{name}")
+                content = archive.read(name).lower()
+                if any(marker in content for marker in machine_paths):
+                    raise ValueError(f"ASSET_HYGIENE_MACHINE_PATH:{name}")
+                if any(marker in content for marker in producer_markers):
+                    raise ValueError(f"ASSET_HYGIENE_PRODUCER_PATH:{name}")
 
     lines = sums.read_text(encoding="utf-8").splitlines()
     expected_lines = [f"{sha256(path)}  {path.name}" for path in (extension, native)]

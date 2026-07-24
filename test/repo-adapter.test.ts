@@ -58,3 +58,28 @@ test("repo adapter resolves the current repository and trusted exporter", async 
     if (symlinkCreated) await assert.rejects(runRelayExport(config(root, linkedExporter), handoff), /EXPORTER_PATH_INVALID|EXPORTER_PATH_ESCAPE/);
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
+
+test("repo adapter resolves HTTPS, SCP-style SSH, and ssh origins, and fails closed otherwise", async () => {
+  const root = mkdtempSync(join(tmpdir(), "relay-origin-adapter-test-"));
+  const repo = join(root, "repo");
+  const handoff = join(repo, ".agent", "review_handoffs", "pr-3", "main", "round-01-review-request.md");
+  mkdirSync(join(repo, ".agent", "review_handoffs", "pr-3", "main"), {recursive: true});
+  writeFileSync(handoff, "handoff\n", "utf8");
+  git(repo, "init"); git(repo, "config", "user.email", "test@example.invalid"); git(repo, "config", "user.name", "Test");
+  git(repo, "add", "."); git(repo, "commit", "-m", "test");
+  git(repo, "remote", "add", "origin", "https://github.com/example/relay.git");
+  try {
+    for (const origin of [
+      "https://github.com/example/relay.git",
+      "git@github.com:example/relay.git",
+      "ssh://git@github.com/example/relay.git",
+    ]) {
+      git(repo, "remote", "set-url", "origin", origin);
+      assert.equal((await resolveHandoffLocation(handoff)).repository, "example/relay");
+    }
+    git(repo, "remote", "set-url", "origin", "file:///tmp/not-a-remote-slug");
+    await assert.rejects(resolveHandoffLocation(handoff), /HANDOFF_LOCATION_INVALID/);
+    git(repo, "remote", "remove", "origin");
+    await assert.rejects(resolveHandoffLocation(handoff), /HANDOFF_LOCATION_INVALID/);
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
