@@ -113,8 +113,7 @@ cd codex-web-review-relay
 ### 2. 安装 native host
 
 ```powershell
-pwsh -NoProfile -File scripts/install-native-host.ps1 `
-  -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay" `
+pwsh -NoProfile -File scripts/install-native-host.ps1 -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay"
 ```
 
 安装器会生成：
@@ -451,9 +450,7 @@ npm run smoke:native -- --launcher "$env:LOCALAPPDATA\codex-web-review-relay\cod
 ## 卸载
 
 ```powershell
-pwsh -NoProfile -File scripts/install-native-host.ps1 `
-  -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay"
-  -Remove
+pwsh -NoProfile -File scripts/install-native-host.ps1 -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay" -Remove
 ```
 
 然后从 `chrome://extensions` 移除扩展。

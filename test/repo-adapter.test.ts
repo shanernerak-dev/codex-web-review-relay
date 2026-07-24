@@ -50,9 +50,11 @@ test("repo adapter resolves the current repository and trusted exporter", async 
     assert.equal(location.handoffPath, payload.handoff_path);
     await assert.rejects(runRelayExport(config(root, outsideExporter), handoff), /EXPORTER_PATH_ESCAPE/);
     const linkedExporter = join(root, "trusted", "linked-exporter.py");
+    let symlinkCreated = false;
     try {
       symlinkSync(outsideExporter, linkedExporter, "file");
-      await assert.rejects(runRelayExport(config(root, linkedExporter), handoff), /EXPORTER_PATH_INVALID|EXPORTER_PATH_ESCAPE/);
+      symlinkCreated = true;
     } catch { /* File symlinks may be unavailable without Windows developer mode. */ }
+    if (symlinkCreated) await assert.rejects(runRelayExport(config(root, linkedExporter), handoff), /EXPORTER_PATH_INVALID|EXPORTER_PATH_ESCAPE/);
   } finally { rmSync(root, {recursive: true, force: true}); }
 });

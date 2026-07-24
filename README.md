@@ -115,8 +115,7 @@ cd codex-web-review-relay
 ### 2. Install the native host
 
 ```powershell
-pwsh -NoProfile -File scripts/install-native-host.ps1 `
-  -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay" `
+pwsh -NoProfile -File scripts/install-native-host.ps1 -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay"
 ```
 
 This generates:
@@ -454,9 +453,7 @@ npm run smoke:native -- --launcher "$env:LOCALAPPDATA\codex-web-review-relay\cod
 ## Uninstall
 
 ```powershell
-pwsh -NoProfile -File scripts/install-native-host.ps1 `
-  -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay"
-  -Remove
+pwsh -NoProfile -File scripts/install-native-host.ps1 -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay" -Remove
 ```
 
 Then remove the extension from `chrome://extensions`.
