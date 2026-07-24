@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { isAbsolute, win32 } from "node:path";
+import { dirname, isAbsolute, join, win32 } from "node:path";
+import { realpathSync } from "node:fs";
 import type { DiagnosticLevel } from "./diagnostic-log.ts";
 
 export interface RelayConfig {
@@ -10,6 +11,7 @@ export interface RelayConfig {
   stateDbPath: string;
   pythonExecutable: string;
   exporterPath: string;
+  trustedInstallRoot: string;
   nativeHostName: string;
   extensionId: string;
   requestWaitSliceMs: number;
@@ -30,7 +32,9 @@ export function validateConfig(value: unknown): RelayConfig {
     if (typeof config[key] !== "string" || (config[key] as string).length === 0) throw new Error(`CONFIG_INVALID:${key}`);
   }
   const exporterPath = config.exporterPath as string;
+  const trustedInstallRoot = config.trustedInstallRoot as string;
   if (exporterPath.includes("\0") || (!isAbsolute(exporterPath) && !win32.isAbsolute(exporterPath))) throw new Error("CONFIG_INVALID:exporterPath");
+  if (trustedInstallRoot.includes("\0") || (!isAbsolute(trustedInstallRoot) && !win32.isAbsolute(trustedInstallRoot))) throw new Error("CONFIG_INVALID:trustedInstallRoot");
   if (!Number.isInteger(config.requestWaitSliceMs) || (config.requestWaitSliceMs as number) < 1_000 || (config.requestWaitSliceMs as number) > 300_000) throw new Error("CONFIG_INVALID:requestWaitSliceMs");
   if (!Number.isInteger(config.turnDeadlineMs) || (config.turnDeadlineMs as number) < 300_000 || (config.turnDeadlineMs as number) > 1_800_000) throw new Error("CONFIG_INVALID:turnDeadlineMs");
   if ((config.turnDeadlineMs as number) < (config.requestWaitSliceMs as number)) throw new Error("CONFIG_INVALID:deadlineOrdering");
@@ -45,5 +49,6 @@ export function validateConfig(value: unknown): RelayConfig {
 }
 
 export function loadConfig(path: string): RelayConfig {
-  return validateConfig(JSON.parse(readFileSync(path, "utf8")));
+  const trustedInstallRoot = realpathSync(dirname(path));
+  return validateConfig({...JSON.parse(readFileSync(path, "utf8")), trustedInstallRoot, exporterPath: join(trustedInstallRoot, "relay_export_helper.py")});
 }

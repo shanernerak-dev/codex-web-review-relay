@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { copyFileSync, createWriteStream, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -13,7 +13,7 @@ function config(root: string, exporterPath: string): RelayConfig {
     listenHost: "127.0.0.1", listenPort: 43127, allowedOrigins: [],
     bearerTokenPath: join(root, "token"), stateDbPath: join(root, "state.sqlite"),
     pythonExecutable: "python", exporterPath,
-    nativeHostName: "dev.test.relay", extensionId: "a".repeat(32),
+    nativeHostName: "dev.test.relay", extensionId: "a".repeat(32), trustedInstallRoot: join(root, "trusted"),
     requestWaitSliceMs: 1_000, turnDeadlineMs: 300_000,
   };
 }
@@ -36,6 +36,8 @@ test("repo adapter resolves the current repository and trusted exporter", async 
   const exporter = join(root, "trusted", "relay_export_helper.py");
   copyFileSync(join(process.cwd(), "scripts", "tools", "relay_export_helper.py"), exporter);
   writeFileSync(handoff, "handoff\n", "utf8");
+  const outsideExporter = join(root, "outside.py");
+  writeFileSync(outsideExporter, "print('{}')\n", "utf8");
   git(repo, "init"); git(repo, "config", "user.email", "test@example.invalid"); git(repo, "config", "user.name", "Test");
   git(repo, "remote", "add", "origin", "https://github.com/example/relay.git"); git(repo, "add", "."); git(repo, "commit", "-m", "test");
   // The helper output is replaced by a tiny trusted test exporter after Git identity resolution.
@@ -46,6 +48,11 @@ test("repo adapter resolves the current repository and trusted exporter", async 
     const location = await resolveHandoffLocation(handoff);
     assert.equal(location.repository, "example/relay");
     assert.equal(location.handoffPath, payload.handoff_path);
-    await assert.rejects(runRelayExport(config(root, join(root, "outside.py")), handoff), /EXPORTER_PATH_INVALID/);
+    await assert.rejects(runRelayExport(config(root, outsideExporter), handoff), /EXPORTER_PATH_ESCAPE/);
+    const linkedExporter = join(root, "trusted", "linked-exporter.py");
+    try {
+      symlinkSync(outsideExporter, linkedExporter, "file");
+      await assert.rejects(runRelayExport(config(root, linkedExporter), handoff), /EXPORTER_PATH_INVALID|EXPORTER_PATH_ESCAPE/);
+    } catch { /* File symlinks may be unavailable without Windows developer mode. */ }
   } finally { rmSync(root, {recursive: true, force: true}); }
 });

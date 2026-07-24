@@ -129,3 +129,25 @@ test("repository migration is idempotent and tolerates unrecoverable legacy rows
   store.close();
   rmSync(root, {recursive: true, force: true});
 });
+
+test("different repositories may reuse the same handoff path sequentially", () => withDatabase((store) => {
+  const path = ".agent/review_handoffs/pr-1/main/round-01-review-request.md";
+  const repoA = relayFixture({repository: "owner-a/repo", handoff_path: path});
+  const repoB = relayFixture({repository: "owner-b/repo", handoff_path: path, handoff_sha256: "c".repeat(64)});
+  const first = store.createOrGetJob(repoA, relayFingerprint(repoA), new Date(Date.now() + 60_000)).job;
+  store.transitionJob(first.job_id, "BLOCKED", "TEST_COMPLETE");
+  const second = store.createOrGetJob(repoB, relayFingerprint(repoB), new Date(Date.now() + 60_000));
+  assert.equal(second.created, true);
+  assert.equal(store.getJobByHandoff(repoA.repository, path).job_id, first.job_id);
+  assert.equal(store.getJobByHandoff(repoB.repository, path).job_id, second.job.job_id);
+}));
+
+test("same repository and path remain ambiguous across historical fingerprints", () => withDatabase((store) => {
+  const path = ".agent/review_handoffs/pr-2/main/round-01-review-request.md";
+  const first = relayFixture({handoff_path: path});
+  const second = relayFixture({handoff_path: path, handoff_sha256: "d".repeat(64)});
+  const firstJob = store.createOrGetJob(first, relayFingerprint(first), new Date(Date.now() + 60_000)).job;
+  store.transitionJob(firstJob.job_id, "BLOCKED", "TEST_COMPLETE");
+  store.createOrGetJob(second, relayFingerprint(second), new Date(Date.now() + 60_000));
+  assert.throws(() => store.getJobByHandoff(first.repository, path), /HANDOFF_LOOKUP_AMBIGUOUS/);
+}));

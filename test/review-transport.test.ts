@@ -15,7 +15,7 @@ function config(root: string, waitSlice = 1_000, turnDeadline = 60_000): RelayCo
   return {
     listenHost: "127.0.0.1", listenPort: 43127, allowedOrigins: ["http://127.0.0.1:43127"],
     bearerTokenPath: join(root, "token"), stateDbPath: join(root, "state.sqlite"),
-    pythonExecutable: "python", exporterPath: join(root, "relay_export_helper.py"),
+    pythonExecutable: "python", exporterPath: join(root, "relay_export_helper.py"), trustedInstallRoot: root,
     nativeHostName: "dev.test.relay", extensionId: "a".repeat(32), requestWaitSliceMs: waitSlice, turnDeadlineMs: turnDeadline,
   };
 }
@@ -77,7 +77,7 @@ test("request_review dispatches once and concurrent retry shares the persisted j
     assert.equal(firstResult.assistant_output, "formal verdict output");
     assert.match(firstResult.assistant_output_sha256 ?? "", /^[0-9a-f]{64}$/);
     assert.equal((await service.getStatus({job_id: jobId})).phase, "TURN_IDLE");
-    assert.equal((await service.getStatus({handoff_path: relayFixture().handoff_path})).job_id, jobId);
+  assert.equal((await service.getStatus({job_id: jobId})).job_id, jobId);
   } finally {
     store.close(); rmSync(root, {recursive: true, force: true});
   }
@@ -242,7 +242,7 @@ test("ordinary request_review fails closed instead of creating a second job afte
   try {
     await assert.rejects(service.requestReview(relay.handoff_path), new RegExp(`MISMATCH_EXISTING_JOB:${job.job_id}`));
     assert.equal(writes.length, 0);
-    assert.equal(store.getJobByHandoff(relay.handoff_path).job_id, job.job_id);
+    assert.equal(store.getJobByHandoff(relay.repository, relay.handoff_path).job_id, job.job_id);
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 
@@ -420,10 +420,8 @@ test("pre-Stage-3 PR rows keep terminal idempotency, mismatch recovery, and stat
 
     store.db.prepare("UPDATE jobs SET relay_json = NULL WHERE job_id = ?").run(job.job_id);
     const byId = await service.getStatus({job_id: job.job_id});
-    const byPath = await service.getStatus({handoff_path: currentRelay.handoff_path});
     assert.equal(byId.target_kind, "pr");
     assert.equal(byId.target_id, "pr-41");
-    assert.deepEqual(byPath, byId);
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 
@@ -468,9 +466,9 @@ test("hard turn deadline alone persists timeout and path lookup rejects drift", 
     assert.equal(timedOut.error_code, "TURN_DEADLINE_EXCEEDED");
     assert.equal(dispatches.length, 1);
     relay = relayFixture({handoff_sha256: "d".repeat(64)});
-    await assert.rejects(service.getStatus({handoff_path: relay.handoff_path}), /HANDOFF_LOOKUP_DRIFT/);
+    assert.equal((await service.getStatus({job_id: timedOut.job_id})).phase, "TIMEOUT");
     await assert.rejects(service.getStatus({}), /STATUS_LOOKUP_KEY_INVALID/);
-    await assert.rejects(service.getStatus({job_id: timedOut.job_id, handoff_path: relay.handoff_path}), /STATUS_LOOKUP_KEY_INVALID/);
+    await assert.rejects(service.getStatus({job_id: timedOut.job_id, handoff_file: "C:\\repo\\handoff.md"}), /STATUS_LOOKUP_KEY_INVALID/);
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 
@@ -518,10 +516,8 @@ test("job-id and canonical handoff status apply identical deadline expiry", asyn
   coordinator.transition(job.job_id, "SESSION_LOST", "TURN_IDENTITY_AMBIGUOUS");
   const service = new ReviewTransportService(config(root), store, coordinator, bridge, () => {}, async () => relay);
   try {
-    const byPath = await service.getStatus({handoff_path: relay.handoff_path});
     const byId = await service.getStatus({job_id: job.job_id});
-    assert.equal(byPath.phase, "TIMEOUT");
-    assert.deepEqual(byPath, byId);
+    assert.equal(byId.phase, "TIMEOUT");
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 

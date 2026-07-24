@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { dirname, isAbsolute, relative, sep } from "node:path";
 import type { RelayConfig } from "./config.ts";
@@ -52,11 +52,14 @@ export async function runRelayExport(config: RelayConfig, handoffFile: string): 
   const location = await resolveHandoffLocation(handoffFile);
   let helper: string;
   try {
-    const trustedRoot = await realpath(dirname(config.exporterPath));
+    const trustedRoot = await realpath(config.trustedInstallRoot);
+    if (!(await lstat(config.exporterPath)).isFile()) throw new Error("invalid exporter");
     helper = await realpath(config.exporterPath);
     const helperRelative = relative(trustedRoot, helper);
-    if (!helperRelative || isAbsolute(helperRelative) || helperRelative === ".." || helperRelative.startsWith(`..${sep}`) || !(await stat(helper)).isFile()) throw new Error("invalid exporter");
-  } catch {
+    if (!helperRelative || isAbsolute(helperRelative) || helperRelative === ".." || helperRelative.startsWith(`..${sep}`)) throw new Error("EXPORTER_PATH_ESCAPE");
+    if (!(await stat(helper)).isFile()) throw new Error("invalid exporter");
+  } catch (error) {
+    if (error instanceof Error && error.message === "EXPORTER_PATH_ESCAPE") throw error;
     throw new Error("EXPORTER_PATH_INVALID");
   }
   let stdout: string;

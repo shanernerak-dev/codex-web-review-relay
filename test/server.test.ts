@@ -20,7 +20,7 @@ test("localhost MCP server enforces auth, origin and protocol version", async ()
     bearerTokenPath: "unused",
     stateDbPath: "unused",
     pythonExecutable: "python",
-    exporterPath: "C:\\relay\\relay_export_helper.py",
+    exporterPath: "C:\\relay\\relay_export_helper.py", trustedInstallRoot: "C:\\relay",
     nativeHostName: "dev.test.relay",
     extensionId: "a".repeat(32),
     requestWaitSliceMs: 300_000,

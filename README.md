@@ -54,7 +54,7 @@ This relay automates steps 2-3 while keeping **you in control**: you manually op
 
 The installation is user-scoped rather than repository-scoped. Each request supplies one absolute `handoff_file`; the relay resolves the Git root and local `origin` slug for that request. The current release remains single-active-job: different repositories can be reviewed sequentially, while queues and concurrent reviewer conversations are out of scope.
 
-The reviewer-visible envelope is frozen byte-for-byte in this order:
+The reviewer-visible envelope is frozen byte-for-byte in two mode-specific contracts. PR mode uses:
 
 ```text
 Repository: owner/name
@@ -65,6 +65,8 @@ Review stream: ...
 Effective round: ...
 Package kind: ...
 ```
+
+Commit-only mode inserts `Target kind: commit` and `Target ID: ...` immediately after `Path:`; all remaining fields retain the same spelling and order. Both contracts exclude local absolute paths.
 
 ## Quick Start
 
@@ -128,32 +130,32 @@ This generates:
 
 ### 3. Use the relay-owned exporter
 
-The installer copies the generic exporter to the user-local install root and records its absolute `exporterPath`. It is not bound to a repository. Each request resolves the repository from the absolute handoff file.
+The installer copies the generic exporter to the user-local install root. The native host derives `<config-directory>/relay_export_helper.py` as its exporter and never binds it to a repository. Each request resolves the repository from the absolute handoff file.
 
-If you don't have a helper yet, copy the minimal implementation from this repository at `scripts/tools/relay_export_helper.py` into your target repository. The generated config already uses this path:
+The installer copies the generic implementation from `scripts/tools/relay_export_helper.py` into the install root. The generated config derives this fixed path from its own directory:
 
 ```json
 {
-  "exporterPath": "<USER_LOCAL_INSTALL_ROOT>/relay_export_helper.py"
+  "stateDbPath": "<USER_LOCAL_INSTALL_ROOT>/state.sqlite"
 }
 ```
 
-The native host invokes the exporter as `python <exporterPath> relay-export <repository-relative-handoff-path>` with the resolved repository as `cwd`. The exporter must:
+The native host invokes `<config-directory>/relay_export_helper.py` as `python <trusted-exporter> relay-export <repository-relative-handoff-path>` with the resolved repository as `cwd`. The exporter must:
 - Accept `relay-export` as the first argument and a repo-relative handoff path as the second.
 - On success: output exactly one JSON object to stdout (the relay-export schema).
 - On failure: exit non-zero with a stable error code on stderr.
 
-Or create your own helper following the full contract in the [Integration](#integration-with-your-repository) section below.
+The exporter is relay-owned; repository-specific stage-gate logic remains in the producer agent and is not installed into the native host.
 
 ### Existing repository migration
 
-The generic default is for new installations. If an existing repository already owns a helper, re-run the installer with that repository-relative path so a reinstall does not replace it with the generic example. For the single-crystal producer, preserve its current helper with:
+Repository-owned helpers are no longer part of the native-host installation contract. Re-run the installer once to migrate to the relay-owned exporter:
 
 ```powershell
 .\scripts\install-native-host.ps1 -InstallRoot <relay-install-root>
 ```
 
-An existing `relay.config.json` is not rewritten automatically; treat a reinstall or explicit config edit as a migration that must retain the producer's helper path.
+An existing `relay.config.json` is not rewritten automatically; treat a reinstall as the migration point.
 
 ### 4. Load the extension
 
@@ -300,7 +302,7 @@ Each round gets a unique fingerprint (round number is part of the relay export),
 
 ## Integration with Your Repository
 
-The relay needs a **repository-side helper** that produces a `relay-export` JSON from a handoff file. This is the only code you need to add to your repo.
+The relay includes a **relay-owned exporter** that produces a `relay-export` JSON from a handoff file. Producer repositories only need to generate the canonical tracked handoff; no helper copy or repository registration is required.
 
 ### What the helper must do
 
@@ -330,12 +332,12 @@ Given a `handoff_path` (repo-relative POSIX path), output a JSON object to stdou
 The native host invokes the helper as:
 
 ```
-python <exporterPath> relay-export <handoff_path>
+python <config-directory>/relay_export_helper.py relay-export <handoff_path>
 ```
 
 The helper must output exactly one JSON object to stdout on success, or exit non-zero with a stable error message on stderr on failure.
 
-See `scripts/tools/check_stage_gate_readiness.py relay-export` in the [producer repository](https://github.com/David-JA/single-crystal-stress) for a full reference implementation. This repository also includes a minimal helper at `scripts/tools/relay_export_helper.py`. The minimum contract:
+The relay-owned exporter is implemented at `scripts/tools/relay_export_helper.py`. The minimum contract:
 
 1. Validate the handoff path matches `.agent/review_handoffs/pr-<N>/<stream>/round-<NN>-<kind>.md` (PR mode) or `.agent/review_handoffs/review-<id>/<stream>/round-<NN>-<kind>.md` (commit-only mode).
 2. Verify the file is tracked, committed, and worktree matches HEAD.
@@ -343,7 +345,7 @@ See `scripts/tools/check_stage_gate_readiness.py relay-export` in the [producer 
 4. Compute SHA-256 hashes and output the JSON.
 5. Exit non-zero with a stable error code on any failure (fail closed).
 
-**Responsibility boundary**: the native host does **not** parse handoff Markdown — it only consumes the validated relay-export JSON from the helper. The repository-side helper is responsible for parsing handoff header fields, validating path/header consistency, checking Git state, and computing hashes.
+**Responsibility boundary**: the native host adapter resolves the repository and invokes the trusted relay-owned exporter; the exporter parses handoff header fields, validates path/header consistency, checks Git state, and computes hashes. Producer-specific stage-gate checks remain outside the relay.
 
 ### Handoff file format
 
@@ -394,7 +396,6 @@ Edit the generated `relay.config.json`:
   "bearerTokenPath": "<path to bearer-token.txt>",
   "stateDbPath": "<path to state.sqlite>",
   "pythonExecutable": "python",
-  "exporterPath": "<user-local install root>/relay_export_helper.py",
   "nativeHostName": "dev.shanernerak.codex_web_review_relay",
   "extensionId": "kkdijpckhlminpolkllmmkldlljakfem",
   "requestWaitSliceMs": 300000,
@@ -403,7 +404,7 @@ Edit the generated `relay.config.json`:
 ```
 
 Key fields:
-- `exporterPath`: relay-owned exporter in the user-local install root; it must resolve strictly inside the trusted install directory.
+- The exporter is fixed at `<config-directory>/relay_export_helper.py`; runtime verifies `lstat`, `realpath`, and containment inside the config directory.
 - Each request supplies one absolute `handoff_file`; the relay resolves the Git root, tracked canonical relative path, and local `origin` `owner/name` without network access.
 - `requestWaitSliceMs`: max time one MCP call waits before returning in-progress (default 5 min).
 - `turnDeadlineMs`: hard deadline for the entire review turn (default 30 min).
@@ -446,15 +447,15 @@ npx tsx --test test/job-store.test.ts test/review-transport.test.ts
 # Compatibility check (requires producer repo checkout)
 npm run test:compat
 
-# Smoke test the native host (requires Chrome + extension loaded)
-npm run smoke:native
+# Smoke test the compiled native host after installation
+npm run smoke:native -- --launcher "$env:LOCALAPPDATA\codex-web-review-relay\codex-web-review-relay.exe"
 ```
 
 ## Uninstall
 
 ```powershell
 pwsh -NoProfile -File scripts/install-native-host.ps1 `
-  -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay" `
+  -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay"
   -Remove
 ```
 

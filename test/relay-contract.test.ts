@@ -75,12 +75,13 @@ test("fingerprint and six locator fields plus fixed publication instruction are 
   const relay = validateRelayExport(relayFixture());
   assert.equal(relayFingerprint(relay), relayFingerprint({...relay}));
   const envelope = renderTriggerEnvelope(relay);
-  assert.equal(envelope.text.split("\n").length, 8);
+  assert.equal(envelope.text, "Repository: David-JA/single-crystal-stress\nPath: .agent/review_handoffs/pr-41/stage-b-delivery/round-01-review-request.md\nfull Ref: refs/heads/codex/stage-b-contract\nReviewed head: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nReview stream: stage-b-delivery\nEffective round: 1\nPackage kind: review-request\nAfter completing the review, publish the formal verdict as a GitHub PR comment following the repository convention.");
+  assert.equal(envelope.sha256, "0fff9fc7c380beb9f57d06634ec73d719a2e9ffa2ba7fea4291f88213ebe2e75");
   assert.equal(envelope.text.split("\n").at(-1), FORMAL_REVIEW_PUBLICATION_INSTRUCTION);
   assert.match(envelope.text, /^Repository: [^\n]+\nPath: /);
   assert.doesNotMatch(envelope.text, /[A-Za-z]:[\\/]|handoff_file|repositoryRoot/);
   assert.match(envelope.text, /Reviewed head: a{40}/);
-  assert.match(envelope.sha256, /^[0-9a-f]{64}$/);
+  assert.notEqual(envelope.sha256, renderTriggerEnvelope(relayFixture({repository: "other/repository"})).sha256);
   assert.doesNotMatch(envelope.text, /normalized_scope|handoff_sha256/);
 });
 
@@ -113,9 +114,8 @@ test("commit-only export has a stable target identity and relay-only envelope", 
   assert.equal(relay.target_id, "review-local-run");
   assert.equal(relay.target_pr, null);
   const envelope = renderTriggerEnvelope(relay);
-  assert.equal(envelope.text.split("\n").length, 10);
-  assert.match(envelope.text, /Target kind: commit/);
-  assert.match(envelope.text, /Target ID: review-local-run/);
+  assert.equal(envelope.text, "Repository: David-JA/single-crystal-stress\nPath: .agent/review_handoffs/review-local-run/main/round-01-review-request.md\nTarget kind: commit\nTarget ID: review-local-run\nfull Ref: refs/heads/codex/stage-b-contract\nReviewed head: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nReview stream: stage-b-delivery\nEffective round: 1\nPackage kind: review-request\nThis is a commit-only review. Do not publish a GitHub PR comment. Return the complete formal verdict in your assistant response.");
+  assert.equal(envelope.sha256, "65a53b54e36a5ec6298e66b90a2fd4117367b7795e5bd0155ca9971ded0cd9f5");
   assert.equal(envelope.text.split("\n").at(-1), RELAY_ONLY_VERDICT_INSTRUCTION);
   assert.doesNotMatch(envelope.text, /GitHub PR comment following/);
 });

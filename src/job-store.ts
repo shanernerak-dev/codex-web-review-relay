@@ -191,12 +191,10 @@ export class JobStore extends EventEmitter {
     return job;
   }
 
-  getJobByHandoff(repository: string, handoffPath?: string): StoredJob {
-    const jobs = handoffPath === undefined
-      ? this.db.prepare("SELECT * FROM jobs WHERE handoff_path = ? ORDER BY created_at DESC LIMIT 2").all(repository)
-      : this.db.prepare("SELECT * FROM jobs WHERE repository = ? AND handoff_path = ? ORDER BY created_at DESC LIMIT 2").all(repository, handoffPath);
+  getJobByHandoff(repository: string, handoffPath: string): StoredJob {
+    const jobs = this.db.prepare("SELECT * FROM jobs WHERE repository = ? AND handoff_path = ? ORDER BY created_at DESC LIMIT 2").all(repository, handoffPath);
     const typedJobs = jobs as unknown as StoredJob[];
-    if (typedJobs.length === 0 && handoffPath !== undefined) {
+    if (typedJobs.length === 0) {
       const legacy = this.db.prepare("SELECT job_id FROM jobs WHERE repository IS NULL AND handoff_path = ? LIMIT 1").get(handoffPath) as {job_id: string} | undefined;
       if (legacy) throw new Error("HISTORICAL_REPOSITORY_UNAVAILABLE");
     }

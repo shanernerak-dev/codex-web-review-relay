@@ -50,7 +50,7 @@ $tokenText = [Convert]::ToBase64String($tokenBytes)
 $config = [ordered]@{
     listenHost = '127.0.0.1'; listenPort = 43127; allowedOrigins = @('http://127.0.0.1:43127')
     bearerTokenPath = $tokenPath; stateDbPath = $statePath
-    pythonExecutable = $python; exporterPath = $exporterPath
+    pythonExecutable = $python
     nativeHostName = $hostName; extensionId = $extensionId
     requestWaitSliceMs = 300000; turnDeadlineMs = 1800000
     diagnosticLogPath = $diagnosticLogPath; diagnosticLogLevel = 'info'

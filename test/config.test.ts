@@ -5,7 +5,7 @@ import { validateConfig } from "../src/config.ts";
 function validConfig() {
   return {
     listenHost: "127.0.0.1", listenPort: 43127, allowedOrigins: ["http://127.0.0.1:43127"],
-    bearerTokenPath: "token", stateDbPath: "state.sqlite", pythonExecutable: "python", exporterPath: "C:\\relay\\relay_export_helper.py", nativeHostName: "dev.test.relay",
+    bearerTokenPath: "token", stateDbPath: "state.sqlite", pythonExecutable: "python", exporterPath: "C:\\relay\\relay_export_helper.py", trustedInstallRoot: "C:\\relay", nativeHostName: "dev.test.relay",
     extensionId: "a".repeat(32), requestWaitSliceMs: 300_000, turnDeadlineMs: 900_000,
   };
 }

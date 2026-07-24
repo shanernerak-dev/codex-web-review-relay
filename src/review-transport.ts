@@ -272,23 +272,13 @@ export class ReviewTransportService {
     }
   }
 
-  async getStatus(input: {job_id?: string; handoff_file?: string; handoff_path?: string}): Promise<TransportStatus> {
+  async getStatus(input: {job_id?: string; handoff_file?: string}): Promise<TransportStatus> {
     const hasJob = typeof input.job_id === "string";
-    const handoffFile = input.handoff_file ?? input.handoff_path;
-    const hasPath = typeof handoffFile === "string";
+    const hasPath = typeof input.handoff_file === "string";
     if (hasJob === hasPath) throw new Error("STATUS_LOOKUP_KEY_INVALID");
     if (hasJob) return publicStatus(this.expirePastDeadline(this.store.getJob(input.job_id as string)));
 
-    // Internal callers from pre-v2 tests may still provide the old relative key;
-    // the MCP server rejects that shape before reaching this method.
-    if (input.handoff_file === undefined && typeof input.handoff_path === "string") {
-      const relay = await this.exportRelay(this.config, input.handoff_path);
-      const stored = this.store.getJobByHandoff(relay.handoff_path);
-      if (stored.handoff_sha256 !== relay.handoff_sha256 || stored.reviewed_head !== relay.reviewed_head || stored.fingerprint !== relayFingerprint(relay)) throw new Error("HANDOFF_LOOKUP_DRIFT");
-      return publicStatus(this.expirePastDeadline(stored));
-    }
-
-    const location = await resolveHandoffLocation(handoffFile as string);
+    const location = await resolveHandoffLocation(input.handoff_file as string);
     const stored = this.store.getJobByHandoff(location.repository, location.handoffPath);
     return publicStatus(this.expirePastDeadline(stored));
   }
