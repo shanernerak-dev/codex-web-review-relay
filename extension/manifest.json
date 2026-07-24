@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Codex Web Review Relay",
-  "version": "0.1.0",
+  "version": "0.2.14",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtK0DVX54AY+J6tYfR3EUdKpXx269aMMC3jqIt2+Zx9kKGsSImAQ5fX7fEozQa9+3JQ4lvoDrZyUWbvBeUM9/hLFJZVz62hod8ROrUm8CtP9KErIrZcFJFaDnnUX6hNvj0tpMkHAuE5b6qRooIyi40TMXMYT66ly25MiY2gqAThk5b5nmQL9z8CRvUADEz1zOEe9fCVXShiFTdQfxh24Zi+Jxkz2STgvRXz809k6dgoBFRoTeXUps4wvZCyNXXum/yaI+RDeOrJYlW4vRk/WhrLsV0YyxR+0A9W6EDY+EYdQLy1qFSFztMHm7BMwH8ruU7Cry5GhRh6FWtYDFHdDUXQIDAQAB",
   "description": "Manually armed ChatGPT transport adapter for repository-owned review handoffs.",
   "permissions": ["activeTab", "nativeMessaging", "storage", "tabs"],

@@ -59,6 +59,7 @@ This relay automates steps 2-3 while keeping **you in control**: you manually op
 - **Node.js >= 24** (uses `--experimental-strip-types` for native TypeScript)
 - **Chrome** (any recent version with Manifest V3 + Native Messaging support)
 - **Python** (for the repository-side `relay-export` helper; see Integration)
+- **Python dev dependencies** for the schema test (`python -m pip install -r requirements-dev.txt`)
 - **Windows** (installer is PowerShell-based; Linux/macOS adaptation is straightforward but not yet scripted)
 
 ### Platform and Account Dependencies
@@ -66,19 +67,23 @@ This relay automates steps 2-3 while keeping **you in control**: you manually op
 The relay itself is **localhost-only transport** — it has no cloud dependency and never contacts GitHub or any remote service. The end-to-end review workflow has two layers of external dependency:
 
 **Layer 1 — Relay transport (always required, zero external dependency):**
-The web reviewer's response is returned to the repo agent through the relay MCP channel (`assistant_output` + SHA-256). This is the **primary verdict delivery path** and requires no platform account, no PR, and no network egress from the relay process.
+The relay process returns transport completion through the MCP channel (`assistant_output` + SHA-256). The formal verdict source depends on the target mode: PR mode requires PR-comment readback; commit-only relay-only mode uses the complete `assistant_output` returned by the reviewer. The relay process itself has no network egress.
+
+Transport diagnostics are written by the native host to the fixed `diagnosticLogPath` configured at install time (default installation: `review-relay.events.jsonl`). Set `diagnosticLogLevel` to `off`, `error`, `info`, `debug`, or `trace`; size and retention are controlled by `diagnosticLogMaxBytes` and `diagnosticLogRetainedFiles`. The default `info` level retains every lifecycle request/native-delivery/ACK boundary. Buffered events preserve source timestamp, sequence, event ID, binding generation, and document identity; stale senders are rejected and duplicate event IDs are deduplicated both in-process and at query time. A diagnostic queue entry is removed only after a correlated `DIAGNOSTIC_ACK` reports either `persisted=true` (`appended` or already-persisted `duplicate`) or the explicit terminal disposition `filtered`; missing, false, or wrong-type ACKs retain the queued event. Diagnostic I/O is strictly best-effort and cannot block review lifecycle processing. Trigger acceptance is independent of the exact user-turn receipt; defensive limits are 30 seconds for native trigger acceptance and 60 seconds for DOM receipt. After a failed review, call `get_review_diagnostics` with its `job_id` before diagnosing the cause. Logs contain reviewed primitive metadata, IDs, lengths, and hashes only—not tokens, cookies, handoff/envelope bodies, full conversations, or assistant output.
 
 **Layer 2 — GitHub PR comment as formal record (optional):**
-If your workflow requires a durable, publicly auditable verdict on the code hosting platform, the web reviewer can additionally publish the verdict as a PR comment. This layer is **optional** — the relay round-trip already delivers the verdict to the repo agent. Auditability without a PR can be achieved by retaining the handoff file and the relay's persisted job record (SQLite).
+For PR mode, the PR comment is the formal verdict record and requires the reviewer to publish/read it back. Commit-only relay-only mode does not use a PR comment; the complete relay `assistant_output` is its formal source. Auditability without a PR can be achieved by retaining the handoff file and the relay's persisted job record (SQLite).
 
 | Scenario | PR required? | Platform connector required? | Notes |
 |----------|-------------|------------------------------|-------|
-| Relay-only verdict | No | No | Verdict returned via MCP `assistant_output`. Handoff file + job store provide local audit trail. |
+| Commit-only relay verdict | No | Reviewer still needs read access to the reviewed commit/handoff | The complete verdict is returned via MCP `assistant_output`; public repositories may be readable on the web, while private repositories need matching access or preloaded trusted material. |
 | PR comment (automated, any repo) | Yes | Yes | ChatGPT must have the [GitHub App](https://chatgpt.com/gpts) connector (or equivalent platform connector) bound to read PR content and post comments. Public repos can be read via web, but automated comment posting still requires the connector. |
 | PR comment (manual) | Yes | No | Reviewer reads the PR via web and you manually copy the verdict to a PR comment. No connector needed. |
 
+**Availability note:** commit-only relay-only formal verdicts are generally available. Use `target_kind=commit`, a stable `target_id`, and the commit-only handoff path; the complete `assistant_output` plus its SHA-256 is the formal verdict record.
+
 **In short:**
-- **Minimum setup (relay-only)**: no platform account needed. The relay delivers the verdict; retain handoff files for audit.
+- **Minimum transport setup**: no platform account is needed by the localhost relay process. The reviewer still needs to read the remote commit and handoff, unless trusted material is preloaded.
 - **Automated PR comment**: bind the appropriate platform connector (e.g. [GitHub App](https://chatgpt.com/gpts)) to the ChatGPT account. Required for both public and private repos when you want the reviewer to post comments automatically.
 - **Manual PR comment**: no connector needed. The reviewer responds in the conversation; you copy the verdict to a PR comment yourself.
 
@@ -110,9 +115,9 @@ This generates:
 
 ### 3. Configure the relay-export helper
 
-The installer sets `helperPath` in `relay.config.json` to `scripts/tools/check_stage_gate_readiness.py` (the producer repository's helper). **You must update this to point at your own helper.**
+The installer defaults `helperPath` in `relay.config.json` to `scripts/tools/relay_export_helper.py`, a repository-relative path for the generic helper example. Copy that helper into your target repository at this path, pass `-HelperPath` to the installer, or replace the value with your own repository helper.
 
-If you don't have a helper yet, this repository includes a minimal one at `scripts/tools/relay_export_helper.py`. Update the generated config:
+If you don't have a helper yet, copy the minimal implementation from this repository at `scripts/tools/relay_export_helper.py` into your target repository. The generated config already uses this path:
 
 ```json
 {
@@ -127,6 +132,16 @@ The native host invokes the helper as `python <helperPath> relay-export <handoff
 
 Or create your own helper following the full contract in the [Integration](#integration-with-your-repository) section below.
 
+### Existing repository migration
+
+The generic default is for new installations. If an existing repository already owns a helper, re-run the installer with that repository-relative path so a reinstall does not replace it with the generic example. For the single-crystal producer, preserve its current helper with:
+
+```powershell
+.\scripts\install-native-host.ps1 -InstallRoot <relay-install-root> -RepositoryRoot C:\coding_projet\pwa1483_1d_scan_stress -HelperPath scripts/tools/check_stage_gate_readiness.py
+```
+
+An existing `relay.config.json` is not rewritten automatically; treat a reinstall or explicit config edit as a migration that must retain the producer's helper path.
+
 ### 4. Load the extension
 
 1. Open `chrome://extensions`
@@ -140,6 +155,10 @@ The extension ID is fixed: `kkdijpckhlminpolkllmmkldlljakfem`.
 1. Open (or create) a ChatGPT conversation you want to use as the reviewer.
 2. Click the extension icon and click **Arm**.
 3. The popup confirms the session is armed and shows connection status.
+
+The extension permits one manually armed ChatGPT tab and one active review job. A second **Arm** returns `SESSION_ALREADY_ARMED`; while a job is active, **Arm** and **Disarm** return `ACTIVE_JOB_ARM_FORBIDDEN` and `ACTIVE_JOB_DISARM_FORBIDDEN`. If the armed tab closes, navigates, changes conversation, or loses its page binding, the current job reports `SESSION_LOST`, the extension disarms, and you must manually Arm the intended conversation again.
+
+During a review, the extension tracks the assistant response by the ChatGPT turn identity and incrementally harvests every ordered assistant turn after the target user turn and before the next user turn. It does not treat whichever assistant bubble is currently newest as the result. A `TURN_IDLE` result is sent only after the target turn set is complete and the native host acknowledges receipt.
 
 ### 6. Connect your MCP client
 
@@ -234,11 +253,13 @@ CREATED -> DISPATCHED -> USER_TURN_ACKED -> ASSISTANT_STARTED -> TURN_IDLE
 
 **Returnable phases**: `request_review` may return any terminal phase plus `SESSION_LOST` and `SEND_UNCERTAIN` (when the wait slice expires before recovery completes). Callers should treat `SESSION_LOST` and `SEND_UNCERTAIN` as retriable — calling `request_review` again with the same handoff will trigger automatic reconciliation.
 
+**Default formal-result polling**: after dispatch is confirmed and the send is observed, allow a first 10-minute observation window for deep-thinking reviewers. If no formal verdict is available, poll the server-side result every 5 minutes. This is an observation schedule, not a timeout or a reason to dispatch again; keep the same fingerprint and review round.
+
 **Same-fingerprint retry**: idempotent. If the job is still active, the call joins the existing wait. If terminal, the stored result is returned immediately.
 
 **Manual recovery**: only `recover_review(handoff_path, confirm_unsent=true)` can re-dispatch after a terminal `MISMATCH`. This is a one-shot, audited operation — use it only after confirming the original message was never sent.
 
-`TURN_IDLE` means the browser transport finished. The `assistant_output` field in the response contains the web reviewer's full reply text (with SHA-256 for integrity). If your workflow uses a GitHub PR comment as the formal record, your agent should additionally read the PR comment. If you rely on the relay channel alone, `assistant_output` is the verdict.
+`TURN_IDLE` means the browser transport finished. Branch formal-verdict handling by `target_kind`: for `pr`, `assistant_output` is only a short transport confirmation and the agent must read back the PR comment, checking actor, reviewed head, and scope; for `commit`, `assistant_output` is the complete formal verdict and its SHA-256 is the integrity check. Do not parse PR-mode `assistant_output` as the formal verdict.
 
 ## Review-Fix Round Limiting
 
@@ -251,7 +272,10 @@ for round_num in range(1, MAX_REVIEW_ROUNDS + 1):
     handoff = create_handoff(round_num, kind="review-request" if round_num == 1 else "review-fix")
     result = mcp_call("request_review", handoff_path=handoff)
     if result["phase"] == "TURN_IDLE":
-        verdict = parse_verdict(result["assistant_output"])  # or read_github_verdict() if using PR comments
+        if handoff.target_kind == "pr":
+            verdict = read_github_verdict(pr=handoff.target_pr, reviewed_head=handoff.reviewed_head)
+        else:
+            verdict = parse_verdict(result["assistant_output"])
         if verdict == "PASS":
             break
     # ... fix findings, commit, next round
@@ -271,8 +295,10 @@ Given a `handoff_path` (repo-relative POSIX path), output a JSON object to stdou
 
 ```json
 {
-  "schema_version": {"major": 1, "minor": 0},
+  "schema_version": {"major": 1, "minor": 1},
   "repository": "owner/repo",
+  "target_kind": "pr",
+  "target_id": "pr-42",
   "target_pr": 42,
   "handoff_path": ".agent/review_handoffs/pr-42/main/round-01-review-request.md",
   "handoff_sha256": "<sha256 of the handoff file at HEAD>",
@@ -298,9 +324,9 @@ The helper must output exactly one JSON object to stdout on success, or exit non
 
 See `scripts/tools/check_stage_gate_readiness.py relay-export` in the [producer repository](https://github.com/David-JA/single-crystal-stress) for a full reference implementation. This repository also includes a minimal helper at `scripts/tools/relay_export_helper.py`. The minimum contract:
 
-1. Validate the handoff path matches `.agent/review_handoffs/pr-<N>/<stream>/round-<NN>-<kind>.md`.
+1. Validate the handoff path matches `.agent/review_handoffs/pr-<N>/<stream>/round-<NN>-<kind>.md` (PR mode) or `.agent/review_handoffs/review-<id>/<stream>/round-<NN>-<kind>.md` (commit-only mode).
 2. Verify the file is tracked, committed, and worktree matches HEAD.
-3. Read PR number, stream, round, kind from the path; read scope from the handoff header fields (e.g. `Review scope:` line in the Markdown body).
+3. Read and require the stable headers. PR mode requires `Target PR`; commit-only mode requires `Target kind: commit` and `Target ID` and rejects a PR target. `Review stream`, `Effective round`, and `Package kind` must match the canonical path; missing, duplicate, malformed, or mismatched values are rejected. Scope has no fallback.
 4. Compute SHA-256 hashes and output the JSON.
 5. Exit non-zero with a stable error code on any failure (fail closed).
 
@@ -324,7 +350,24 @@ Review scope: <what the reviewer should look at>
 <your content here>
 ```
 
-The **native host** does not parse the handoff body — it only hashes the file and consumes the relay-export JSON produced by the helper. The **helper** is responsible for parsing and validating the handoff header fields. The trigger envelope sent to ChatGPT contains six dynamic fields (path, ref, head, stream, round, kind) and two fixed instructions: one directing the reviewer to execute the review based on pre-read context and respond in plain text, and one noting that publishing the verdict as a GitHub PR comment is optional — the relay returns the reviewer's response regardless of whether a PR comment is posted.
+The **native host** does not parse the handoff body — it only consumes the validated relay-export JSON produced by the helper. The **helper** is responsible for parsing and validating the handoff header fields. PR mode keeps the six-field envelope and PR-comment instruction. Commit-only mode adds `Target kind` / `Target ID` and instructs the reviewer to return the complete formal verdict in `assistant_output` without a PR comment.
+
+Commit-only handoff format:
+
+```markdown
+# Commit Review Request
+
+Package kind: `review-request`
+Review stream: `main`
+Effective round: `1`
+Target kind: `commit`
+Target ID: `review-security-audit`
+Review scope: <what the reviewer should look at>
+
+## Findings to review
+
+<your content here>
+```
 
 ### Configuration
 
@@ -349,7 +392,7 @@ Edit the generated `relay.config.json`:
 
 Key fields:
 - `repositoryRoot`: your repo's absolute path. The helper runs with this as cwd.
-- `helperPath`: repo-relative path to your relay-export helper.
+- `helperPath`: repo-relative path to your relay-export helper. The installer and native runtime reject absolute paths, parent traversal, and symlink-resolved paths outside `repositoryRoot`.
 - `requestWaitSliceMs`: max time one MCP call waits before returning in-progress (default 5 min).
 - `turnDeadlineMs`: hard deadline for the entire review turn (default 30 min).
 
@@ -373,7 +416,7 @@ If you want similar structure, see:
 ## Current Limitations (MVP)
 
 - Single repository per native host instance (config is static).
-- Single active session and single active job at a time.
+- One manually armed ChatGPT tab and one active job at a time; no automatic tab or conversation switching.
 - Windows-only installer (Linux/macOS needs manual Native Messaging manifest registration).
 - ChatGPT web only (no API, no other chat platforms).
 - Full `npm test` has a known open-handle issue with Node's test runner + Native Messaging stdin; targeted suites pass cleanly.
@@ -381,6 +424,9 @@ If you want similar structure, see:
 ## Development
 
 ```powershell
+# Install the pinned Python dependency used by the published-schema test
+python -m pip install -r requirements-dev.txt
+
 # Run targeted tests
 npx tsx --test test/job-store.test.ts test/review-transport.test.ts
 

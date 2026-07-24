@@ -17,8 +17,8 @@ const TRANSITIONS: Record<JobPhase, ReadonlySet<JobPhase>> = {
   ASSISTANT_STARTED: new Set(["TURN_IDLE", "SESSION_LOST", "RECONCILING", "TIMEOUT"]),
   TURN_IDLE: new Set(),
   SESSION_LOST: new Set(["RECONCILING", "BLOCKED", "MISMATCH", "TIMEOUT"]),
-  SEND_UNCERTAIN: new Set(["RECONCILING", "BLOCKED", "MISMATCH", "TIMEOUT"]),
-  RECONCILING: new Set(["DISPATCHED", "USER_TURN_ACKED", "ASSISTANT_STARTED", "SEND_UNCERTAIN", "BLOCKED", "MISMATCH", "TIMEOUT"]),
+  SEND_UNCERTAIN: new Set(["SESSION_LOST", "RECONCILING", "BLOCKED", "MISMATCH", "TIMEOUT"]),
+  RECONCILING: new Set(["DISPATCHED", "USER_TURN_ACKED", "ASSISTANT_STARTED", "SESSION_LOST", "SEND_UNCERTAIN", "BLOCKED", "MISMATCH", "TIMEOUT"]),
   BLOCKED: new Set(),
   MISMATCH: new Set(),
   TIMEOUT: new Set(),
@@ -29,9 +29,10 @@ export interface StoredJob {
   fingerprint: string;
   handoff_path: string;
   handoff_sha256: string;
-  relay_json: string;
+  relay_json: string | null;
   reviewed_head: string;
   session_id: string | null;
+  ownership_generation: number;
   conversation_identity: string | null;
   phase: JobPhase;
   recovery_from: JobPhase | null;
@@ -52,6 +53,7 @@ export interface StoredSession {
   extension_version: string;
   schema_major: number;
   schema_minor: number;
+  capabilities_json: string;
   armed_at: string;
   heartbeat_at: string;
   lease_expires_at: string;
@@ -82,6 +84,7 @@ export class JobStore extends EventEmitter {
         relay_json TEXT,
         reviewed_head TEXT NOT NULL,
         session_id TEXT,
+        ownership_generation INTEGER NOT NULL DEFAULT 0,
         conversation_identity TEXT,
         phase TEXT NOT NULL,
         recovery_from TEXT,
@@ -105,6 +108,7 @@ export class JobStore extends EventEmitter {
         extension_version TEXT NOT NULL,
         schema_major INTEGER NOT NULL,
         schema_minor INTEGER NOT NULL,
+        capabilities_json TEXT NOT NULL DEFAULT '[]',
         armed_at TEXT NOT NULL,
         heartbeat_at TEXT NOT NULL,
         lease_expires_at TEXT NOT NULL
@@ -112,12 +116,14 @@ export class JobStore extends EventEmitter {
     `);
     for (const statement of [
       "ALTER TABLE jobs ADD COLUMN session_id TEXT",
+      "ALTER TABLE jobs ADD COLUMN ownership_generation INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE jobs ADD COLUMN relay_json TEXT",
       "ALTER TABLE jobs ADD COLUMN conversation_identity TEXT",
       "ALTER TABLE jobs ADD COLUMN recovery_send_used INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE jobs ADD COLUMN manual_recovery_used INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE jobs ADD COLUMN assistant_output TEXT",
       "ALTER TABLE jobs ADD COLUMN assistant_output_sha256 TEXT",
+      "ALTER TABLE active_session ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'",
     ]) {
       try { this.db.exec(statement); } catch (error) {
         if (!(error instanceof Error) || !error.message.includes("duplicate column name")) throw error;
@@ -209,6 +215,13 @@ export class JobStore extends EventEmitter {
     return job;
   }
 
+  bindJobSession(jobId: string, sessionId: string): StoredJob {
+    const result = this.db.prepare("UPDATE jobs SET session_id = ?, ownership_generation = ownership_generation + 1, updated_at = ? WHERE job_id = ?")
+      .run(sessionId, new Date().toISOString(), jobId);
+    if (result.changes !== 1) throw new Error("JOB_NOT_FOUND");
+    return this.getJob(jobId);
+  }
+
   claimRecoverySend(jobId: string): boolean {
     const result = this.db.prepare(`
       UPDATE jobs SET recovery_send_used = 1, updated_at = ?
@@ -261,6 +274,7 @@ export class JobStore extends EventEmitter {
     extensionVersion: string;
     schemaMajor: number;
     schemaMinor: number;
+    capabilities?: string[];
     leaseMs: number;
     now?: Date;
   }): StoredSession {
@@ -274,20 +288,21 @@ export class JobStore extends EventEmitter {
     this.db.prepare(`
       INSERT INTO active_session (
         singleton, session_id, conversation_identity, extension_version,
-        schema_major, schema_minor, armed_at, heartbeat_at, lease_expires_at
-      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
+        schema_major, schema_minor, capabilities_json, armed_at, heartbeat_at, lease_expires_at
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(singleton) DO UPDATE SET
         session_id = excluded.session_id,
         conversation_identity = excluded.conversation_identity,
         extension_version = excluded.extension_version,
         schema_major = excluded.schema_major,
         schema_minor = excluded.schema_minor,
+        capabilities_json = excluded.capabilities_json,
         armed_at = excluded.armed_at,
         heartbeat_at = excluded.heartbeat_at,
         lease_expires_at = excluded.lease_expires_at
     `).run(
       input.sessionId, "", input.extensionVersion,
-      input.schemaMajor, input.schemaMinor, nowText, nowText, leaseExpires,
+      input.schemaMajor, input.schemaMinor, JSON.stringify(input.capabilities ?? []), nowText, nowText, leaseExpires,
     );
     return this.getActiveSession(now) as StoredSession;
   }
@@ -306,6 +321,10 @@ export class JobStore extends EventEmitter {
     const session = this.db.prepare("SELECT * FROM active_session WHERE singleton = 1").get() as StoredSession | undefined;
     if (!session || Date.parse(session.lease_expires_at) <= now.getTime()) return null;
     return session;
+  }
+
+  getSessionRegardlessLease(sessionId: string): StoredSession | null {
+    return (this.db.prepare("SELECT * FROM active_session WHERE singleton = 1 AND session_id = ?").get(sessionId) as StoredSession | undefined) ?? null;
   }
 
   disarmSession(sessionId: string): void {

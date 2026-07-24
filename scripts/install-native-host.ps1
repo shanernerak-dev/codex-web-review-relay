@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)] [string]$RepositoryRoot,
     [string]$NodeExecutable = 'node',
     [string]$PythonExecutable = 'python',
+    [string]$HelperPath = 'scripts/tools/relay_export_helper.py',
     [switch]$Remove
 )
 
@@ -29,6 +30,17 @@ if ($Remove) {
 }
 
 if (-not (Test-Path -LiteralPath $repo -PathType Container)) { throw "RepositoryRoot does not exist: $repo" }
+if ([System.IO.Path]::IsPathRooted($HelperPath)) { throw 'HelperPath must be repository-relative.' }
+if (($HelperPath -split '[\\/]') -contains '..') { throw 'HelperPath must not contain parent traversal.' }
+$repoCanonical = (Resolve-Path -LiteralPath $repo -ErrorAction Stop).Path.TrimEnd('\')
+$helperCandidate = [System.IO.Path]::GetFullPath((Join-Path $repo $HelperPath))
+if (-not (Test-Path -LiteralPath $helperCandidate -PathType Leaf)) { throw "HelperPath does not resolve to a file: $HelperPath" }
+$helperCanonical = (Resolve-Path -LiteralPath $helperCandidate -ErrorAction Stop).Path
+$repoPrefix = "$repoCanonical\"
+if (-not $helperCanonical.StartsWith($repoPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'HelperPath must resolve strictly inside RepositoryRoot.'
+}
+$HelperPath = $HelperPath.Replace('\', '/')
 $node = (Get-Command $NodeExecutable -ErrorAction Stop).Source
 $python = (Get-Command $PythonExecutable -ErrorAction Stop).Source
 if (-not $PSCmdlet.ShouldProcess($install, 'Install review relay native host')) { return }
@@ -40,6 +52,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Failed to restrict install directory ACL.' }
 
 $tokenPath = Join-Path $install 'bearer-token.txt'
 $statePath = Join-Path $install 'state.sqlite'
+$diagnosticLogPath = Join-Path $install 'review-relay.events.jsonl'
 $configPath = Join-Path $install 'relay.config.json'
 $launcherPath = Join-Path $install 'codex-web-review-relay.exe'
 $generatedSourcePath = Join-Path $install 'launcher.generated.cs'
@@ -55,9 +68,11 @@ $tokenText = [Convert]::ToBase64String($tokenBytes)
 $config = [ordered]@{
     listenHost = '127.0.0.1'; listenPort = 43127; allowedOrigins = @('http://127.0.0.1:43127')
     bearerTokenPath = $tokenPath; stateDbPath = $statePath; repositoryRoot = $repo
-    pythonExecutable = $python; helperPath = 'scripts/tools/check_stage_gate_readiness.py'
+    pythonExecutable = $python; helperPath = $HelperPath
     nativeHostName = $hostName; extensionId = $extensionId
     requestWaitSliceMs = 300000; turnDeadlineMs = 1800000
+    diagnosticLogPath = $diagnosticLogPath; diagnosticLogLevel = 'info'
+    diagnosticLogMaxBytes = 10485760; diagnosticLogRetainedFiles = 3
 }
 [System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json -Depth 4), [System.Text.UTF8Encoding]::new($false))
 

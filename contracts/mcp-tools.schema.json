@@ -13,7 +13,7 @@
         "properties": {
           "handoff_path": {
             "type": "string",
-            "pattern": "^\\.agent/review_handoffs/pr-[1-9][0-9]*/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"
+            "pattern": "^\\.agent/review_handoffs/(?:pr-[1-9][0-9]*|review-[a-z0-9][a-z0-9-]*)/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"
           }
         }
       }
@@ -28,7 +28,7 @@
         "properties": {
           "handoff_path": {
             "type": "string",
-            "pattern": "^\\.agent/review_handoffs/pr-[1-9][0-9]*/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"
+            "pattern": "^\\.agent/review_handoffs/(?:pr-[1-9][0-9]*|review-[a-z0-9][a-z0-9-]*)/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"
           },
           "confirm_unsent": {"const": true}
         }
@@ -52,6 +52,19 @@
             "properties": {"handoff_path": {"type": "string", "minLength": 1}}
           }
         ]
+      }
+    },
+    {
+      "name": "get_review_diagnostics",
+      "description": "Read bounded, redacted transport diagnostic events for one persisted job.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["job_id"],
+        "properties": {
+          "job_id": {"type": "string", "format": "uuid"},
+          "limit": {"type": "integer", "minimum": 1, "maximum": 500}
+        }
       }
     }
   ]

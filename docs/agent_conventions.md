@@ -12,17 +12,19 @@
 ## 传输契约
 
 - **两层依赖**：
-  - L1 relay transport：零外部依赖，verdict 主路径（MCP `assistant_output` + SHA-256）。
-  - L2 PR comment：可选。自动发布需平台连接器（公开 / 私有皆然）；手动复制 verdict 无需连接器。
-- **envelope 构成**：6 个动态字段 `handoff_path` / `full_ref` / `reviewed_head` / `review_stream` / `effective_round` / `package_kind` + 2 条固定指令（执行评审：读 `Path` 与 `reviewed head`；PR comment 可选）。见 `src/envelope.ts`。
+  - L1 relay transport：零外部依赖，负责返回 transport completion、`assistant_output` 与 SHA-256。
+  - formal verdict source 由 workflow mode 声明：PR-comment mode 以目标 PR comment readback 为正式来源，`assistant_output` 只作为非空短确认；commit-only relay-only mode 以完整 `assistant_output` + SHA-256 为正式来源，PR comment 不适用。
+  - **envelope 构成**：PR mode 保留 6 个动态字段 `handoff_path` / `full_ref` / `reviewed_head` / `review_stream` / `effective_round` / `package_kind` + PR-publication instruction；Stage 3 commit-only mode 在此基础上增加 `target_kind` / `target_id`，并使用 relay-only verdict instruction。两种 mode 都不内嵌 handoff 正文。见 `src/envelope.ts`。
 - **native host 不解析 handoff 正文**：只哈希文件并消费 helper 产出的 relay-export JSON。envelope **不提供正文兜底**——reviewer 必须经 `reviewed head` 在远端读 commit 与 handoff。
+- **PR fingerprint compatibility**：PR mode 的 fingerprint 保持 Stage 3 之前的字段序列 bit-for-bit；只有 commit-only identity 将 `target_kind` / `target_id` 纳入 fingerprint。升级时旧 PR terminal/active/MISMATCH job 必须继续命中同一 persisted row。
+- **relay-only capability**：native host 可接受 v1.0 extension 的 PR mode，但 commit-only request 必须在创建新 job 前、恢复前以及 transition 到 `RECONCILING` / claim recovery send 前要求 `relay-only-v1` capability。缺少 capability 时不得留下新的 job 或改变现有 recovery 计数，并在任何 DOM write/click 前以 `RELAY_ONLY_EXTENSION_UNSUPPORTED` fail closed。
 
 ## 角色边界
 
 | 角色 | 职责 | 不做什么 |
 |---|---|---|
 | repo agent | 写 handoff、commit、**push**、触发 `request_review`、解析 verdict、按 findings 改文档 | 不替 reviewer 下结论 |
-| web reviewer | 读 `Path` + `reviewed head`、评审、纯文本回 verdict、可选发 PR comment | 不依赖 envelope 内嵌正文 |
+| web reviewer | 读 `Path` + target identity + `reviewed head`、评审；PR mode 发布 formal verdict 到目标 PR comment 并回短确认，commit-only mode 直接回完整 verdict | 不依赖 envelope 内嵌正文 |
 | native host | 校验 relay-export、哈希 handoff、dispatch、捕获 `assistant_output`、fail-closed | 不解析 handoff Markdown 语义 |
 | repository helper | 解析 handoff header fields、校验 path/header/git 状态、算 hash、输出 relay-export JSON | 不接触浏览器 / 网络 |
 
@@ -31,12 +33,19 @@
 - **handoff 路径正则**（repo 相对，POSIX）：
 
   ```
-  ^\.agent/review_handoffs/pr-[1-9][0-9]*/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\.md$
+  ^\.agent/review_handoffs/(?:pr-[1-9][0-9]*|review-[a-z0-9][a-z0-9-]*)/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\.md$
   ```
 
-- **relay-export 必填字段**：`schema_version`、`repository`、`target_pr`、`handoff_path`、`handoff_sha256`、`full_ref`、`reviewed_head`、`review_stream`、`effective_round`、`package_kind`、`normalized_scope`、`scope_sha256`。约束：`scope_sha256 == sha256(canonical_json(normalized_scope))`。见 `src/relay-contract.ts`。
+- **relay-export 必填字段**：`schema_version`、`repository`、`handoff_path`、`handoff_sha256`、`full_ref`、`reviewed_head`、`review_stream`、`effective_round`、`package_kind`、`normalized_scope`、`scope_sha256`；Stage 3 schema v1.1 另要求 `target_kind` / `target_id`，`target_pr` 仅在 PR mode 有值。v1.0 PR export 仍可由 consumer 推断 `target_kind=pr` 与 `target_id=pr-<N>`。约束：`scope_sha256 == sha256(canonical_json(normalized_scope))`。见 `src/relay-contract.ts` 与 `contracts/relay-export.schema.json`。
 - **helper CLI**：`python <helperPath> relay-export <handoff_path>`，`cwd = repositoryRoot`。成功：stdout **仅一个** JSON 对象；失败：非零退出 + stderr 稳定错误码。见 `src/repo-adapter.ts`。
 - **header fields 非 YAML frontmatter**：scope 等取自正文稳定 header 行（如 `Review scope:`），不要写成 frontmatter。
+
+### Stage-scoped review round
+
+- `Effective round` 的计数域是 `(Stage, review stream)`，不是整个 PR 或整个仓库。Stage 发生 transition 后，下一 Stage 必须从 `round-01` 重新开始。
+- 同一 Stage 内，`round-01` 是 `review-request`；后续 `round-N`（`N > 1`）是该 Stage 的 `review-fix`。transport retry、same-fingerprint retry 和 readback retry 不增加有效 round。
+- 当前 v1 handoff path 没有独立的 Stage segment；因此跨 Stage 必须使用带 Stage 作用域的 `Review stream`（例如 `stage2-main`），避免与上一 Stage 的 `main/round-01` identity 冲突。不得用跨 Stage 累计的 `round-05` 代替 Stage 2 的 `round-01`。
+- 历史 handoff identity 保持 append-only；发现 round scope 错误时，创建新的 Stage-scoped handoff，不改写已评审 handoff 或其 GitHub comment。
 
 ## job 生命周期
 
@@ -47,9 +56,15 @@
 | terminal | `TURN_IDLE`、`MISMATCH`、`TIMEOUT`、`BLOCKED` |
 
 - **可返回 phase**：terminal + `SESSION_LOST` + `SEND_UNCERTAIN`（等待切片在 recovery 完成前超时）。后两者视为可重试。
+- **Formal verdict polling default**：确认 dispatch 成功且进入 `send-observed` 后，首次服务端 formal-result 观察窗口默认等待 **10 分钟**；首次仍无正式 verdict 时，后续以 **5 分钟**为默认轮询间隔，直到 terminal phase、hard deadline 或 fail-closed 停止条件。首次 10 分钟是深度评审观察窗口，不是 timeout，也不得触发重复 dispatch 或新 round。该默认同时适用于 PR-comment 与 commit-only review；PR-comment 仍必须以 GitHub PR comment 为 formal source。
 - **同 fingerprint 重试幂等**：active 则加入现有等待；terminal 则立即返回存储结果。
 - **手动恢复**：仅 `recover_review(handoff_path, confirm_unsent=true)` 可在 terminal `MISMATCH` 后重 dispatch，一次性，须确认原消息未发送。
-- **`TURN_IDLE`**：`assistant_output` 即 verdict（若不用 PR comment）。
+- **`TURN_IDLE`**：表示浏览器 transport completion。PR mode 的 `assistant_output` 只应是非空短确认，formal verdict 必须从目标 PR comment readback；commit-only relay-only mode 的 `assistant_output` 是正式结论，且只能在 dispatch 后新增 assistant turn 已按稳定 DOM identity 完整 harvest、存在可在 reconnect 后复核的 turn-level completion evidence（例如该 turn 的 copy action）、内容保持稳定，并收到 native ACK 后 terminalize。仅观察到一段稳定文本、或曾经观察到 generating，都不是充分证据。`assistant_output_sha256` 仅用于完整性与重试审计，不替代 turn identity。
+
+  **Turn parser baseline（参考 SyncNos 的概念设计）**：receipt 与 completion 必须共享同一个 conversation/turn 数据模型。实现应优先使用页面提供的稳定 turn identity（例如 enclosing `data-turn-id`），再使用 message identity；不能把每个 role node、最新 bubble 或文本相等性当作 turn identity。解析器应保留 conversation DOM document order、role、同一 turn 内的多个 message 顺序，并允许 virtualized shell 在后续 pass hydrate 后通过跨 pass harvest/cache 重建完整 ordered set。长内容提取是对已定位 turn 的完整 extraction/assembly，不能用 output 长度或固定首 token 窗口替代。完成判定必须绑定目标 assistant turn，而非任意 `Copy*` descendant、静默窗口或 generating 状态的单一快照。SyncNos 仅作为概念参考，不得复制其 AGPL implementation。
+- **commit-only transport gate 不允许 browser-readback 代替**：Stage 3 及其后续 relay-only review test 必须由 MCP result 返回完整 formal verdict（非空 `assistant_output`，并可核对首尾 anchor / SHA-256）。如果 web reviewer 页面已完成但 relay 未传回全文，repo agent 必须停止并请 Maintainer 人工转接；不得把 Chrome 页面 readback 当作该轮 transport acceptance。下一轮 handoff 必须将这次全文传输失败列为首要问题与验收项。
+- **单绑定状态机**：extension 全局只允许一个 manually armed ChatGPT tab 和一个 active job。已 armed 时再次 Arm 返回 `SESSION_ALREADY_ARMED`；active job 期间 Arm / Disarm 分别返回 `ACTIVE_JOB_ARM_FORBIDDEN` / `ACTIVE_JOB_DISARM_FORBIDDEN`，不能覆盖或清除 `activeJobId`。armed tab 关闭、导航、conversation identity 改变或 page binding drift 时，旧 binding 立即停止接收 lifecycle；若有 active job则报告 `SESSION_LOST`，随后进入 `DISARMED` 并要求 manual re-arm。native port reconnect 只能恢复同一 persisted binding，不得隐式切换 tab、conversation 或 job。content script 收到 lifecycle `{ok:false}` 时不得停止 observer，必须继续重试或进入 recovery。
+- **失败先取日志证据**：transport diagnostic event 由 extension/content script 经 Native Messaging 发送给 native host，并写入 config 指定的固定 JSONL 文件。默认 `info` 保留 request/native delivery/ACK 边界；buffered event 必须携带 source timestamp、sequence、event ID、binding generation 与 document identity。诊断 I/O 严格 best-effort，不得阻断 transport；stale sender 拒绝，重复 event ID 幂等。字段只允许合同声明的 primitive，禁止 nested object/array；不得写 bearer token、cookie、envelope/handoff 正文或完整对话/output。全文传输失败后先调用 `get_review_diagnostics(job_id=...)`，再决定修复；不得仅由 job phase 猜测 DOM、port 或 ACK 失败位置。
 
 ## 文档同步
 
@@ -69,5 +84,5 @@
 - 改源不改派生（relay-export 输出是派生，不手改）。
 - 最小充分验证：改 envelope / contract → 跑 helper `relay-export` 自检 + targeted tests；改 `extension/content.js` → 扩展重载 + arm 实测。
 - 不擅自扩大范围，不顺手重构 / 格式统一。
-- commit 单一范围；push / merge / tag 受控需授权。
+- commit 保持单一范围。在用户已明确授权的 review/PR workflow 内，agent 可对范围受控且验证完成的改动直接 commit 和 push；merge / tag / branch deletion 仍需单独授权。
 - **触发 review 前必须 push** reviewed head 与 handoff 到远端，否则 reviewer 404 → UNVERIFIED。

@@ -43,7 +43,9 @@
 
 ## Post-PASS completion identity finding
 
-真实 deep-thinking review 显示，一个 ChatGPT conversation turn 可以包含多个 `data-message-author-role="assistant"` message bubble。把 baseline 后的每个 assistant role node 都当作独立 turn 会错误触发 `TURN_IDENTITY_AMBIGUOUS`。对 `SyncNos-Webclipper` 的概念级审计确认其 collector 优先使用 enclosing `data-turn-id` 作为 stable turn key，并在同一 turn 内保留多个 message 的顺序；本项目没有复制其 AGPL 实现。
+真实 deep-thinking review 显示，一个 ChatGPT conversation turn 可以包含多个 `data-message-author-role="assistant"` message bubble。把 baseline 后的每个 assistant role node 都当作独立 turn 会错误触发 `TURN_IDENTITY_AMBIGUOUS`。对 `SyncNos-Webclipper` 的概念级审计确认其 collector 优先使用 enclosing `data-turn-id` 作为 stable turn key，并在同一 turn 内保留多个 message 的顺序；它还通过 conversation-turn skeleton、hydration 检查、跨 pass harvest cache 与 document-order assembly处理 virtualized shell 和多 DOM fragment。本项目没有复制其 AGPL 实现，但应将这套 turn parser 数据模型作为 receipt、completion 和全文 extraction 的共同设计基线。
+
+Round 09 的 `baseline_count=0 / candidate_count=2 / exact_match_count=0` 应按两层解释：源码与 diagnostics 直接证明当前实现看到了两个候选 DOM 片段，却没有任何单候选通过完整 envelope 比较；它们是否属于同一 ChatGPT turn、以及是否能按稳定 identity 合并，是基于页面结构的待验证推断，不能从这三个计数单独证明。下一步必须记录并审计每个候选的 stable turn key、message identity、role、document order 与 canonical text，再决定是否将同 turn fragments 组装后比较；不能继续只依赖单 node exact text match。
 
 当前 relay据此采用更窄的独立实现：多个新增 assistant node 只有在共享同一个非空 stable turn key 时才属于合法同一 response；跨不同 stable turn key 的多个候选继续 fail closed。`TURN_IDLE` 回传时按 document order 聚合该 stable turn 内的所有 assistant bubble，并以空行保留 bubble 边界，避免只回传最后一个 fragment（例如标题或 reasoning 段）。若 ChatGPT 完成后空 composer不显示 send button，则以无 stop control + 唯一有效 composer判定 idle。两项条件共同避免把 reasoning/final bubble误判为两个 review turn，同时保留跨 turn ambiguity gate。
 

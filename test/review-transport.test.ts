@@ -33,9 +33,10 @@ function fixture() {
 }
 
 function lifecycle(bridge: NativeBridge, type: string, jobId: string, assistantOutput?: string): void {
+  const job = bridge.coordinator.store.getJob(jobId);
   bridge.handleInbound({
     schemaVersion: NATIVE_SCHEMA_VERSION, type, requestId: `event-${type}`,
-    sessionId: "session-1", jobId,
+    sessionId: "session-1", jobId, ownershipGeneration: job.ownership_generation,
     ...(assistantOutput !== undefined ? {assistantOutput} : {}),
   });
 }
@@ -47,6 +48,7 @@ function acceptOutbound(bridge: NativeBridge, message: Record<string, unknown>):
     responseToRequestId: message.requestId,
     sessionId: message.sessionId,
     jobId: message.jobId,
+    ownershipGeneration: message.ownershipGeneration,
   });
 }
 
@@ -257,6 +259,174 @@ test("manual recovery rejects a pre-migration job without historical relay expor
   try {
     await assert.rejects(service.recoverReview(relay.handoff_path, true), /HISTORICAL_RELAY_UNAVAILABLE/);
     assert.equal(store.getJob(job.job_id).phase, "MISMATCH");
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
+test("commit-only capability preflight creates no job and does not block a later PR review", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const commitRelay = relayFixture({
+    schema_version: {major: 1, minor: 1}, target_kind: "commit", target_id: "review-capability-preflight", target_pr: null,
+    handoff_path: ".agent/review_handoffs/review-capability-preflight/main/round-01-review-request.md",
+  });
+  const prRelay = relayFixture();
+  const writes: Record<string, unknown>[] = [];
+  const service = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => {
+    writes.push(message);
+    setImmediate(() => {
+      acceptOutbound(bridge, message);
+      lifecycle(bridge, "USER_TURN_ACKED", message.jobId as string);
+      lifecycle(bridge, "ASSISTANT_STARTED", message.jobId as string);
+      lifecycle(bridge, "TURN_IDLE", message.jobId as string, "PR confirmation");
+    });
+  }, async (_config, handoffPath) => handoffPath.includes("review-capability-preflight") ? commitRelay : prRelay);
+  try {
+    await assert.rejects(service.requestReview(commitRelay.handoff_path), /RELAY_ONLY_EXTENSION_UNSUPPORTED/);
+    assert.equal(store.getActiveJob(), null);
+    const prResult = await service.requestReview(prRelay.handoff_path);
+    assert.equal(prResult.phase, "TURN_IDLE");
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].reviewMode, "pr-comment");
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
+test("capability failure leaves an existing recovery job unchanged", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const commitRelay = relayFixture({
+    schema_version: {major: 1, minor: 1}, target_kind: "commit", target_id: "review-capability-recovery", target_pr: null,
+    handoff_path: ".agent/review_handoffs/review-capability-recovery/main/round-01-review-request.md",
+  });
+  const recoveryJob = store.createOrGetJob(commitRelay, relayFingerprint(commitRelay), new Date(Date.now() + 60_000)).job;
+  coordinator.transition(recoveryJob.job_id, "MISMATCH", "TEST_MISMATCH");
+  const service = new ReviewTransportService(config(root), store, coordinator, bridge, () => {}, async () => commitRelay);
+  try {
+    const before = store.getJob(recoveryJob.job_id);
+    await assert.rejects(service.recoverReview(commitRelay.handoff_path, true), /RELAY_ONLY_EXTENSION_UNSUPPORTED/);
+    const after = store.getJob(recoveryJob.job_id);
+    assert.equal(after.phase, before.phase);
+    assert.equal(after.recovery_send_used, before.recovery_send_used);
+    assert.equal(after.manual_recovery_used, before.manual_recovery_used);
+
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
+test("unsupported commit retries leave CREATED and RECONCILING rows unchanged", async () => {
+  for (const initialPhase of ["CREATED", "RECONCILING"] as const) {
+    const {root, store, coordinator, bridge} = fixture();
+    const commitRelay = relayFixture({
+      schema_version: {major: 1, minor: 1}, target_kind: "commit", target_id: `review-capability-${initialPhase.toLowerCase()}`, target_pr: null,
+      handoff_path: `.agent/review_handoffs/review-capability-${initialPhase.toLowerCase()}/main/round-01-review-request.md`,
+    });
+    const fingerprint = relayFingerprint(commitRelay);
+    const job = store.createOrGetJob(commitRelay, fingerprint, new Date(Date.now() + 60_000)).job;
+    if (initialPhase === "RECONCILING") {
+      coordinator.transition(job.job_id, "DISPATCHED");
+      coordinator.transition(job.job_id, "RECONCILING");
+    }
+    const service = new ReviewTransportService(config(root), store, coordinator, bridge, () => {
+      throw new Error("UNEXPECTED_WRITE");
+    }, async () => commitRelay);
+    try {
+      const before = store.getJob(job.job_id);
+      await assert.rejects(service.requestReview(commitRelay.handoff_path), /RELAY_ONLY_EXTENSION_UNSUPPORTED/);
+      const after = store.getJob(job.job_id);
+      assert.equal(after.phase, initialPhase);
+      assert.equal(after.recovery_send_used, before.recovery_send_used);
+    } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+  }
+});
+
+test("legacy unsupported commit rows are blocked before a later PR dispatch", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const staleRelay = relayFixture({
+    schema_version: {major: 1, minor: 1}, target_kind: "commit", target_id: "review-capability-stale", target_pr: null,
+    handoff_path: ".agent/review_handoffs/review-capability-stale/main/round-01-review-request.md",
+  });
+  const prRelay = relayFixture();
+  const stale = store.createOrGetJob(staleRelay, relayFingerprint(staleRelay), new Date(Date.now() + 60_000)).job;
+  const writes: Record<string, unknown>[] = [];
+  const service = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => {
+    writes.push(message);
+    setImmediate(() => {
+      acceptOutbound(bridge, message);
+      lifecycle(bridge, "USER_TURN_ACKED", message.jobId as string);
+      lifecycle(bridge, "ASSISTANT_STARTED", message.jobId as string);
+      lifecycle(bridge, "TURN_IDLE", message.jobId as string, "PR confirmation");
+    });
+  }, async (_config, handoffPath) => handoffPath === prRelay.handoff_path ? prRelay : staleRelay);
+  try {
+    const result = await service.requestReview(prRelay.handoff_path);
+    assert.equal(result.phase, "TURN_IDLE");
+    assert.equal(store.getJob(stale.job_id).phase, "BLOCKED");
+    assert.equal(store.getJob(stale.job_id).error_code, "RELAY_ONLY_EXTENSION_UNSUPPORTED");
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].reviewMode, "pr-comment");
+  } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+});
+
+test("legacy PR rows with review-* streams are never classified as commit rows", async () => {
+  for (const relayJson of [null, "{invalid-json"] as const) {
+    const {root, store, coordinator, bridge} = fixture();
+    const legacyPr = relayFixture({
+      handoff_path: ".agent/review_handoffs/pr-41/review-main/round-01-review-request.md",
+      review_stream: "review-main",
+    });
+    const nextPr = relayFixture({
+      handoff_path: ".agent/review_handoffs/pr-41/review-main/round-02-review-request.md",
+      review_stream: "review-main",
+      handoff_sha256: "c".repeat(64),
+    });
+    const oldJob = store.createOrGetJob(legacyPr, relayFingerprint(legacyPr), new Date(Date.now() + 60_000)).job;
+    coordinator.transition(oldJob.job_id, "DISPATCHED");
+    store.db.prepare("UPDATE jobs SET relay_json = ? WHERE job_id = ?").run(relayJson, oldJob.job_id);
+    const writes: Record<string, unknown>[] = [];
+    const service = new ReviewTransportService(
+      config(root), store, coordinator, bridge,
+      (message) => writes.push(message),
+      async (_config, handoffPath) => handoffPath === nextPr.handoff_path ? nextPr : legacyPr,
+    );
+    try {
+      await assert.rejects(service.requestReview(nextPr.handoff_path), /ACTIVE_JOB_EXISTS/);
+      assert.equal(store.getJob(oldJob.job_id).phase, "DISPATCHED");
+      assert.equal(store.getJob(oldJob.job_id).error_code, null);
+      assert.equal(writes.length, 0);
+    } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
+  }
+});
+
+test("pre-Stage-3 PR rows keep terminal idempotency, mismatch recovery, and status readability", async () => {
+  const {root, store, coordinator, bridge} = fixture();
+  const currentRelay = relayFixture();
+  const oldRelay: any = {...currentRelay};
+  delete oldRelay.target_kind;
+  delete oldRelay.target_id;
+  const fingerprint = relayFingerprint(oldRelay);
+  const job = store.createOrGetJob(oldRelay, fingerprint, new Date(Date.now() + 60_000)).job;
+  const service = new ReviewTransportService(config(root), store, coordinator, bridge, (message) => {
+    setImmediate(() => {
+      acceptOutbound(bridge, message);
+      lifecycle(bridge, "USER_TURN_ACKED", message.jobId as string);
+      lifecycle(bridge, "ASSISTANT_STARTED", message.jobId as string);
+      lifecycle(bridge, "TURN_IDLE", message.jobId as string, "legacy-compatible verdict");
+    });
+  }, async () => currentRelay);
+  try {
+    coordinator.transition(job.job_id, "TIMEOUT", "OLD_TIMEOUT");
+    const terminal = await service.requestReview(currentRelay.handoff_path);
+    assert.equal(terminal.job_id, job.job_id);
+    assert.equal(terminal.phase, "TIMEOUT");
+
+    store.db.prepare("UPDATE jobs SET phase = 'MISMATCH', result = 'mismatch', error_code = 'OLD_MISMATCH', deadline = ? WHERE job_id = ?")
+      .run(new Date(Date.now() + 60_000).toISOString(), job.job_id);
+    const recovered = await service.recoverReview(currentRelay.handoff_path, true);
+    assert.equal(recovered.job_id, job.job_id);
+    assert.equal(recovered.phase, "TURN_IDLE");
+
+    store.db.prepare("UPDATE jobs SET relay_json = NULL WHERE job_id = ?").run(job.job_id);
+    const byId = await service.getStatus({job_id: job.job_id});
+    const byPath = await service.getStatus({handoff_path: currentRelay.handoff_path});
+    assert.equal(byId.target_kind, "pr");
+    assert.equal(byId.target_id, "pr-41");
+    assert.deepEqual(byPath, byId);
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 

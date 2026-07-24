@@ -6,6 +6,9 @@
   "required": [
     "job_id",
     "fingerprint",
+    "target_kind",
+    "target_id",
+    "target_pr",
     "handoff_path",
     "handoff_sha256",
     "reviewed_head",
@@ -18,6 +21,9 @@
   "properties": {
     "job_id": {"type": "string", "format": "uuid"},
     "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "target_kind": {"enum": ["pr", "commit"]},
+    "target_id": {"type": "string", "minLength": 1},
+    "target_pr": {"type": ["integer", "null"], "minimum": 1},
     "handoff_path": {"type": "string", "minLength": 1},
     "handoff_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "reviewed_head": {"type": "string", "pattern": "^[0-9a-f]{40}$"},

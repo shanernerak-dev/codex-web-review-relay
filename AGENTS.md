@@ -24,8 +24,9 @@
 
 ## 红线（不可违反；细则在 conventions）
 
-1. relay 是 localhost-only transport；verdict 主路径是 MCP `assistant_output` 回传，GitHub PR comment **可选**。
-2. trigger envelope 仅含 6 个动态字段 + 固定指令，**绝不内嵌 handoff 正文**；reviewer 凭 `Path` 与 `reviewed head` 在远端读 commit / handoff。开源仓库经 commit 取证是不可动摇的基础。
+1. relay 是 localhost-only transport。PR mode 以目标 PR comment readback 为 formal verdict 来源，relay `assistant_output` 只作为 transport evidence；commit-only relay-only mode 以完整 `assistant_output` + SHA-256 为 formal verdict，不发布 PR comment。
+2. PR trigger envelope 仅含 6 个动态字段 + 固定指令；Stage 3 commit-only envelope 在此基础上增加 `target_kind` / `target_id`，二者都**绝不内嵌 handoff 正文**；reviewer 凭 locator 与 `reviewed head` 在远端读 commit / handoff。开源仓库经 commit 取证是不可动摇的基础。
 3. 改 relay 行为以 `src/*` 与 `contracts/*` 为权威；改公开文档须 `README.md` 与 `README.zh-CN.md` 同步。
 4. handoff / helper 合同 fail-closed：任何校验失败中止于 dispatch 前。
-5. 不擅自扩大改动范围；commit 保持单一范围；push / merge / tag 为受控操作，需明确授权。
+5. review round 按 Stage 独立计数；Stage 切换后从 `round-01` 重新开始，不得把上一 Stage 的 round 累计到下一 Stage。为避免 v1 handoff path 冲突，跨 Stage 的 stream 必须带 Stage 作用域。
+6. 不擅自扩大改动范围；commit 保持单一范围。在用户已明确授权的 review/PR workflow 内，agent 可对范围受控且验证完成的改动直接 commit 和 push；merge / tag / branch deletion 仍需单独授权。

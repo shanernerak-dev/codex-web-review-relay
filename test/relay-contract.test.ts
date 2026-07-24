@@ -1,15 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FORMAL_REVIEW_PUBLICATION_INSTRUCTION, renderTriggerEnvelope } from "../src/envelope.ts";
+import { canonicalJson, sha256 } from "../src/canonical.ts";
+import { FORMAL_REVIEW_PUBLICATION_INSTRUCTION, RELAY_ONLY_VERDICT_INSTRUCTION, renderTriggerEnvelope } from "../src/envelope.ts";
 import { relayFingerprint, validateRelayExport } from "../src/relay-contract.ts";
 import { relayFixture } from "./fixtures.ts";
 
-test("relay export accepts v1.0 and ignores optional higher-minor fields", () => {
-  const relay = validateRelayExport(relayFixture({
+test("relay export rejects unsupported higher minor versions", () => {
+  assert.throws(() => validateRelayExport(relayFixture({
     schema_version: {major: 1, minor: 3},
-    optional_future_field: "ignored by v1 consumer",
-  }));
-  assert.equal(relay.schema_version.minor, 3);
+  })), /RELAY_SCHEMA_MINOR_UNSUPPORTED/);
+});
+
+test("v1.0 is limited to PR paths while v1.1 supports commit-only paths", () => {
+  assert.throws(() => validateRelayExport(relayFixture({
+    schema_version: {major: 1, minor: 0}, target_kind: "commit", target_id: "review-local-run", target_pr: null,
+    handoff_path: ".agent/review_handoffs/review-local-run/main/round-01-review-request.md",
+  })), /RELAY_COMMIT_SCHEMA_MINOR_UNSUPPORTED/);
+});
+
+test("relay target identity must exactly match the handoff path", () => {
+  for (const relay of [
+    relayFixture({target_pr: 42, target_id: "pr-42"}),
+    relayFixture({schema_version: {major: 1, minor: 1}, target_pr: 42, target_id: "pr-42"}),
+    relayFixture({
+      schema_version: {major: 1, minor: 1}, target_kind: "commit", target_id: "review-beta", target_pr: null,
+      handoff_path: ".agent/review_handoffs/review-alpha/main/round-01-review-request.md",
+    }),
+  ]) {
+    assert.throws(() => validateRelayExport(relay), /RELAY_TARGET_PATH_MISMATCH/);
+  }
 });
 
 test("relay export fails closed on unknown major and scope drift", () => {
@@ -62,4 +81,40 @@ test("fingerprint and six locator fields plus fixed publication instruction are 
   assert.match(envelope.text, /Reviewed head: a{40}/);
   assert.match(envelope.sha256, /^[0-9a-f]{64}$/);
   assert.doesNotMatch(envelope.text, /normalized_scope|handoff_sha256/);
+});
+
+test("PR fingerprint remains identical to the pre-Stage-3 algorithm", () => {
+  const relay = validateRelayExport(relayFixture());
+  const legacyInput = {
+    repository: relay.repository,
+    target_pr: relay.target_pr,
+    handoff_path: relay.handoff_path,
+    handoff_sha256: relay.handoff_sha256,
+    full_ref: relay.full_ref,
+    reviewed_head: relay.reviewed_head,
+    review_stream: relay.review_stream,
+    effective_round: relay.effective_round,
+    package_kind: relay.package_kind,
+    scope_sha256: relay.scope_sha256,
+  };
+  assert.equal(relayFingerprint(relay), sha256(canonicalJson(legacyInput)));
+});
+
+test("commit-only export has a stable target identity and relay-only envelope", () => {
+  const relay = validateRelayExport(relayFixture({
+    schema_version: {major: 1, minor: 1},
+    target_kind: "commit",
+    target_id: "review-local-run",
+    target_pr: null,
+    handoff_path: ".agent/review_handoffs/review-local-run/main/round-01-review-request.md",
+  }));
+  assert.equal(relay.target_kind, "commit");
+  assert.equal(relay.target_id, "review-local-run");
+  assert.equal(relay.target_pr, null);
+  const envelope = renderTriggerEnvelope(relay);
+  assert.equal(envelope.text.split("\n").length, 9);
+  assert.match(envelope.text, /Target kind: commit/);
+  assert.match(envelope.text, /Target ID: review-local-run/);
+  assert.equal(envelope.text.split("\n").at(-1), RELAY_ONLY_VERDICT_INSTRUCTION);
+  assert.doesNotMatch(envelope.text, /GitHub PR comment following/);
 });

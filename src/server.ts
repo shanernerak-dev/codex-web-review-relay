@@ -4,6 +4,7 @@ import { safeEqual } from "./canonical.ts";
 import type { RelayConfig } from "./config.ts";
 import type { JobStore } from "./job-store.ts";
 import type { ReviewTransportService } from "./review-transport.ts";
+import type { DiagnosticLogger } from "./diagnostic-log.ts";
 
 export const MCP_PROTOCOL_VERSION = "2025-11-25";
 const MAX_BODY_BYTES = 1_048_576;
@@ -52,6 +53,7 @@ export function createRelayServer(
   bearerToken: string,
   store: JobStore,
   transport?: ReviewTransportService,
+  diagnostics?: DiagnosticLogger,
 ): Server {
   if (config.listenHost !== "127.0.0.1" && config.listenHost !== "::1") {
     throw new Error("LISTEN_HOST_NOT_LOOPBACK");
@@ -129,7 +131,7 @@ export function createRelayServer(
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: {tools: {listChanged: false}},
           serverInfo: {name: "codex-web-review-relay", version: "0.1.0"},
-          instructions: "Transport completion is not a formal review verdict; GitHub readback remains external.",
+          instructions: "PR-comment reviews require external GitHub readback; commit-only relay reviews return the formal verdict in assistant_output.",
         },
       });
       return;
@@ -173,6 +175,14 @@ export function createRelayServer(
           result = await transport.recoverReview(value.handoff_path, true);
         } else if (name === "get_review_transport_status") {
           result = await transport.getStatus(args as {job_id?: string; handoff_path?: string});
+        } else if (name === "get_review_diagnostics") {
+          const value = args as Record<string, unknown>;
+          const keys = Object.keys(value);
+          if (!diagnostics || !keys.every((key) => key === "job_id" || key === "limit") || typeof value.job_id !== "string"
+            || (value.limit !== undefined && (!Number.isInteger(value.limit) || (value.limit as number) < 1 || (value.limit as number) > 500))) {
+            throw new Error("REVIEW_DIAGNOSTICS_INPUT_INVALID");
+          }
+          result = diagnostics.query(value.job_id, value.limit as number | undefined);
         } else {
           sendJson(response, 200, jsonRpcError(message.id, -32601, "Tool not found"));
           return;

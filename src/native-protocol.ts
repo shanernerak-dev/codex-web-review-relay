@@ -3,8 +3,10 @@ import { sha256 } from "./canonical.ts";
 import type { TriggerEnvelope } from "./envelope.ts";
 import { JobCoordinator } from "./job-coordinator.ts";
 import type { StoredSession } from "./job-store.ts";
+import type { DiagnosticLogger, DiagnosticLevel } from "./diagnostic-log.ts";
 
-export const NATIVE_SCHEMA_VERSION = Object.freeze({major: 1, minor: 0});
+export const NATIVE_SCHEMA_VERSION = Object.freeze({major: 1, minor: 3});
+export const RELAY_ONLY_CAPABILITY = "relay-only-v1";
 const MAX_ASSISTANT_OUTPUT_BYTES = 131_072;
 
 type NativeRecord = Record<string, unknown>;
@@ -24,7 +26,7 @@ function validateVersion(message: NativeRecord): {major: number; minor: number} 
   if (!Number.isInteger(version.minor) || (version.minor as number) < 0) {
     throw new Error("NATIVE_SCHEMA_MINOR_INVALID");
   }
-  if (version.minor !== NATIVE_SCHEMA_VERSION.minor) {
+  if ((version.minor as number) > NATIVE_SCHEMA_VERSION.minor) {
     throw new Error("NATIVE_SCHEMA_MINOR_UNSUPPORTED");
   }
   return {major: version.major as number, minor: version.minor as number};
@@ -37,15 +39,18 @@ export class NativeBridge {
     expectedType: string;
     sessionId: string;
     jobId: string;
+    ownershipGeneration: number;
     resolve: () => void;
     reject: (error: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   }>();
   readonly acknowledgedOutbound = new Set<string>();
+  readonly diagnostics?: DiagnosticLogger;
 
-  constructor(coordinator: JobCoordinator, leaseMs = 30_000) {
+  constructor(coordinator: JobCoordinator, leaseMs = 30_000, diagnostics?: DiagnosticLogger) {
     this.coordinator = coordinator;
     this.leaseMs = leaseMs;
+    this.diagnostics = diagnostics;
   }
 
   handleInbound(value: unknown): NativeRecord | null {
@@ -56,6 +61,36 @@ export class NativeBridge {
     const peerVersion = validateVersion(message);
     const type = requireText(message, "type");
     const requestId = typeof message.requestId === "string" ? message.requestId : null;
+    if (type === "DIAGNOSTIC_EVENT") {
+      if (!requestId) throw new Error("NATIVE_MESSAGE_INVALID:requestId");
+      const level = requireText(message, "level") as DiagnosticLevel;
+      if (!["error", "info", "debug", "trace"].includes(level)) throw new Error("DIAGNOSTIC_LEVEL_INVALID");
+      const component = requireText(message, "component");
+      const event = requireText(message, "event");
+      const details = message.details !== null && typeof message.details === "object" && !Array.isArray(message.details)
+        ? message.details as NativeRecord : {};
+      const disposition = this.diagnostics?.writeResult(level, component, event, {
+        ...details,
+        session_id: typeof message.sessionId === "string" ? message.sessionId : undefined,
+        job_id: typeof message.jobId === "string" ? message.jobId : undefined,
+        request_id: requestId,
+        event_id: message.eventId,
+        source_timestamp: message.sourceTimestamp,
+        sequence: message.sequence,
+        binding_generation: message.bindingGeneration,
+        ownership_generation: message.ownershipGeneration,
+        document_id: message.documentId,
+        tab_id: message.tabId,
+      }) ?? "failed";
+      if (disposition === "failed") throw new Error("DIAGNOSTIC_PERSIST_FAILED");
+      return {
+        schemaVersion: NATIVE_SCHEMA_VERSION,
+        type: "DIAGNOSTIC_ACK",
+        responseToRequestId: requestId,
+        persisted: disposition === "appended" || disposition === "duplicate",
+        disposition,
+      };
+    }
     if (type === "DISPATCH_TRIGGER_ACCEPTED" || type === "RECONCILE_TRIGGER_ACCEPTED") {
       const responseTo = requireText(message, "responseToRequestId");
       const pending = this.pendingOutbound.get(responseTo);
@@ -63,6 +98,11 @@ export class NativeBridge {
       if (!pending) throw new Error("NATIVE_OUTBOUND_ACK_UNKNOWN");
       if (pending.expectedType !== type || pending.sessionId !== requireText(message, "sessionId") || pending.jobId !== requireText(message, "jobId")) {
         throw new Error("NATIVE_OUTBOUND_ACK_MISMATCH");
+      }
+      const session = this.requireSession(pending.sessionId);
+      if (peerVersion.major !== session.schema_major || peerVersion.minor !== session.schema_minor) throw new Error("NATIVE_SCHEMA_SESSION_MISMATCH");
+      if (!Number.isSafeInteger(message.ownershipGeneration) || message.ownershipGeneration !== pending.ownershipGeneration) {
+        throw new Error("JOB_OWNERSHIP_STALE");
       }
       clearTimeout(pending.timer);
       this.pendingOutbound.delete(responseTo);
@@ -78,6 +118,9 @@ export class NativeBridge {
         extensionVersion: requireText(message, "extensionVersion"),
         schemaMajor: peerVersion.major,
         schemaMinor: peerVersion.minor,
+        capabilities: Array.isArray(message.capabilities)
+          ? message.capabilities.filter((entry): entry is string => typeof entry === "string")
+          : [],
         leaseMs: this.leaseMs,
       });
       return this.ack(requestId, "SESSION_ARMED", session);
@@ -94,8 +137,25 @@ export class NativeBridge {
     }
 
     const sessionId = requireText(message, "sessionId");
-    const session = this.requireSession(sessionId);
     const jobId = requireText(message, "jobId");
+    const currentJob = this.coordinator.store.getJob(jobId);
+    let relayOnlyJob = false;
+    try { relayOnlyJob = JSON.parse(currentJob.relay_json ?? "{}").target_kind === "commit"; } catch {}
+    const ownershipGeneration = Number.isSafeInteger(message.ownershipGeneration) ? message.ownershipGeneration as number : null;
+    if (relayOnlyJob && ownershipGeneration === null) throw new Error("NATIVE_MESSAGE_INVALID:ownershipGeneration");
+    if (ownershipGeneration !== null && ownershipGeneration !== currentJob.ownership_generation) {
+      throw new Error("JOB_OWNERSHIP_STALE");
+    }
+    if (type === "SESSION_LOST") {
+      if (currentJob.session_id !== sessionId) throw new Error("JOB_OWNERSHIP_STALE");
+      const active = this.coordinator.store.getActiveSession();
+      const ownedExpired = currentJob.session_id === sessionId;
+      if ((!active || active.session_id !== sessionId) && !ownedExpired) throw new Error("SESSION_NOT_ARMED");
+    } else {
+      const session = this.requireSession(sessionId);
+      if (peerVersion.major !== session.schema_major || peerVersion.minor !== session.schema_minor) throw new Error("NATIVE_SCHEMA_SESSION_MISMATCH");
+      if (relayOnlyJob && currentJob.session_id !== sessionId) throw new Error("JOB_OWNERSHIP_STALE");
+    }
     const phaseByType = {
       USER_TURN_ACKED: "USER_TURN_ACKED",
       ASSISTANT_STARTED: "ASSISTANT_STARTED",
@@ -108,6 +168,17 @@ export class NativeBridge {
     const phase = phaseByType[type as keyof typeof phaseByType];
     if (!phase) throw new Error(`NATIVE_MESSAGE_TYPE_UNSUPPORTED:${type}`);
     let current = this.coordinator.store.getJob(jobId);
+    const authoritativeTerminalPhases = new Set(["TURN_IDLE", "MISMATCH", "TIMEOUT", "BLOCKED"]);
+    const browserCleanupPhases = new Set(["TURN_IDLE", "MISMATCH", "TIMEOUT", "SEND_UNCERTAIN", "SESSION_LOST"]);
+    if (authoritativeTerminalPhases.has(current.phase) && browserCleanupPhases.has(phase) && current.phase !== phase) {
+      return {
+        schemaVersion: NATIVE_SCHEMA_VERSION,
+        type: "EVENT_ACK",
+        responseToRequestId: requestId ?? undefined,
+        jobId,
+        phase: current.phase,
+      };
+    }
     if (type === "TURN_IDLE") {
       if (typeof message.assistantOutput !== "string" || message.assistantOutput.length === 0) throw new Error("ASSISTANT_OUTPUT_REQUIRED");
       const output = message.assistantOutput;
@@ -136,9 +207,11 @@ export class NativeBridge {
     jobId: string;
     fingerprint: string;
     envelope: TriggerEnvelope;
+    reviewMode?: "pr-comment" | "relay-only";
     deadline: string;
+    ownershipGeneration?: number;
   }): NativeRecord {
-    const session = this.requireSession(input.sessionId);
+    this.assertReviewModeSupported(input.sessionId, input.reviewMode ?? "pr-comment");
     const job = this.coordinator.store.getJob(input.jobId);
     if (job.phase !== "CREATED" || job.fingerprint !== input.fingerprint) {
       throw new Error("DISPATCH_PRECONDITION_FAILED");
@@ -152,11 +225,14 @@ export class NativeBridge {
       fingerprint: input.fingerprint,
       envelope: input.envelope.text,
       envelopeSha256: input.envelope.sha256,
+      reviewMode: input.reviewMode ?? "pr-comment",
       deadline: input.deadline,
+      ownershipGeneration: input.ownershipGeneration ?? job.ownership_generation,
     };
   }
 
-  markDispatchWritten(jobId: string): void {
+  markDispatchWritten(jobId: string, sessionId?: string): void {
+    if (sessionId) this.coordinator.store.bindJobSession(jobId, sessionId);
     this.coordinator.transition(jobId, "DISPATCHED");
   }
 
@@ -165,10 +241,12 @@ export class NativeBridge {
     jobId: string;
     fingerprint: string;
     envelope: TriggerEnvelope;
+    reviewMode?: "pr-comment" | "relay-only";
     deadline: string;
     allowUnsentSend: boolean;
+    ownershipGeneration?: number;
   }): NativeRecord {
-    const session = this.requireSession(input.sessionId);
+    this.assertReviewModeSupported(input.sessionId, input.reviewMode ?? "pr-comment");
     const job = this.coordinator.store.getJob(input.jobId);
     if (job.phase !== "RECONCILING" || job.fingerprint !== input.fingerprint) throw new Error("RECONCILE_PRECONDITION_FAILED");
     return {
@@ -180,12 +258,14 @@ export class NativeBridge {
       fingerprint: input.fingerprint,
       envelope: input.envelope.text,
       envelopeSha256: input.envelope.sha256,
+      reviewMode: input.reviewMode ?? "pr-comment",
       deadline: input.deadline,
       allowUnsentSend: input.allowUnsentSend,
+      ownershipGeneration: input.ownershipGeneration ?? job.ownership_generation,
     };
   }
 
-  expectOutboundAck(message: NativeRecord, timeoutMs = 5_000): Promise<void> {
+  expectOutboundAck(message: NativeRecord, timeoutMs = 30_000): Promise<void> {
     const requestId = requireText(message, "requestId");
     const type = requireText(message, "type");
     const expectedType = `${type}_ACCEPTED`;
@@ -199,6 +279,7 @@ export class NativeBridge {
         expectedType,
         sessionId: requireText(message, "sessionId"),
         jobId: requireText(message, "jobId"),
+        ownershipGeneration: Number.isSafeInteger(message.ownershipGeneration) ? message.ownershipGeneration as number : -1,
         resolve,
         reject,
         timer,
@@ -219,6 +300,21 @@ export class NativeBridge {
     const session = this.coordinator.store.getActiveSession();
     if (!session || session.session_id !== sessionId) throw new Error("SESSION_NOT_ARMED");
     return session;
+  }
+
+  assertReviewModeSupported(sessionId: string, reviewMode: "pr-comment" | "relay-only"): void {
+    this.requireReviewModeCapability(this.requireSession(sessionId), reviewMode);
+  }
+
+  private requireReviewModeCapability(session: StoredSession, reviewMode: "pr-comment" | "relay-only"): void {
+    if (reviewMode !== "relay-only") return;
+    if (session.schema_minor < 3) throw new Error("RELAY_ONLY_EXTENSION_UNSUPPORTED");
+    let capabilities: unknown;
+    try { capabilities = JSON.parse(session.capabilities_json); }
+    catch { capabilities = null; }
+    if (!Array.isArray(capabilities) || !capabilities.includes(RELAY_ONLY_CAPABILITY)) {
+      throw new Error("RELAY_ONLY_EXTENSION_UNSUPPORTED");
+    }
   }
 
   private ack(requestId: string, type: string, session: StoredSession | null): NativeRecord {

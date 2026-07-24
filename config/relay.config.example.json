@@ -8,9 +8,13 @@
   "stateDbPath": "<USER_LOCAL_ABSOLUTE_PATH>",
   "repositoryRoot": "<CURRENT_REPOSITORY_ABSOLUTE_PATH>",
   "pythonExecutable": "python",
-  "helperPath": "scripts/tools/check_stage_gate_readiness.py",
+  "helperPath": "scripts/tools/relay_export_helper.py",
   "nativeHostName": "dev.shanernerak.codex_web_review_relay",
   "extensionId": "kkdijpckhlminpolkllmmkldlljakfem",
   "requestWaitSliceMs": 300000,
-  "turnDeadlineMs": 1800000
+  "turnDeadlineMs": 1800000,
+  "diagnosticLogPath": "<USER_LOCAL_ABSOLUTE_PATH>/review-relay.events.jsonl",
+  "diagnosticLogLevel": "info",
+  "diagnosticLogMaxBytes": 10485760,
+  "diagnosticLogRetainedFiles": 3
 }
