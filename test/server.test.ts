@@ -19,16 +19,15 @@ test("localhost MCP server enforces auth, origin and protocol version", async ()
     allowedOrigins: ["http://127.0.0.1:43127"],
     bearerTokenPath: "unused",
     stateDbPath: "unused",
-    repositoryRoot: "unused",
     pythonExecutable: "python",
-    helperPath: "unused",
+    exporterPath: "C:\\relay\\relay_export_helper.py",
     nativeHostName: "dev.test.relay",
     extensionId: "a".repeat(32),
     requestWaitSliceMs: 300_000,
     turnDeadlineMs: 900_000,
   } as RelayConfig;
   const transport = {
-    async requestReview(handoffPath: string) { return {job_id: "job-1", handoff_path: handoffPath, phase: "TURN_IDLE"}; },
+    async requestReview(handoffFile: string) { return {job_id: "job-1", handoff_path: handoffFile, phase: "TURN_IDLE"}; },
     async getStatus(input: object) { return {job_id: "job-1", phase: "TURN_IDLE", lookup: input}; },
   } as unknown as ReviewTransportService;
   const diagnostics = new DiagnosticLogger(join(root, "events.jsonl"), "info", 65_536, 2);
@@ -76,7 +75,7 @@ test("localhost MCP server enforces auth, origin and protocol version", async ()
   const call = await fetch(`${base}/mcp`, {
     method: "POST",
     headers: {...headers, "mcp-protocol-version": MCP_PROTOCOL_VERSION},
-    body: JSON.stringify({jsonrpc: "2.0", id: 4, method: "tools/call", params: {name: "request_review", arguments: {handoff_path: ".agent/review_handoffs/pr-41/stage-c-delivery/round-01-review-request.md"}}}),
+    body: JSON.stringify({jsonrpc: "2.0", id: 4, method: "tools/call", params: {name: "request_review", arguments: {handoff_file: "C:\\repo\\.agent\\review_handoffs\\pr-41\\stage-c-delivery\\round-01-review-request.md"}}}),
   });
   const callBody = await call.json();
   assert.equal(callBody.result.isError, false);
@@ -84,7 +83,7 @@ test("localhost MCP server enforces auth, origin and protocol version", async ()
   const invalidCall = await fetch(`${base}/mcp`, {
     method: "POST",
     headers: {...headers, "mcp-protocol-version": MCP_PROTOCOL_VERSION},
-    body: JSON.stringify({jsonrpc: "2.0", id: 5, method: "tools/call", params: {name: "request_review", arguments: {handoff_path: "x", extra: true}}}),
+    body: JSON.stringify({jsonrpc: "2.0", id: 5, method: "tools/call", params: {name: "request_review", arguments: {handoff_path: "x"}}}),
   });
   assert.equal((await invalidCall.json()).result.structuredContent.error_code, "REQUEST_REVIEW_INPUT_INVALID");
   const diagnosticCall = await fetch(`${base}/mcp`, {

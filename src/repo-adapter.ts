@@ -1,57 +1,79 @@
 import { execFile } from "node:child_process";
 import { realpath, stat } from "node:fs/promises";
 import { promisify } from "node:util";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, sep } from "node:path";
 import type { RelayConfig } from "./config.ts";
 import { validateRelayExport, type RelayExport } from "./relay-contract.ts";
 
 const execFileAsync = promisify(execFile);
 
-async function resolveRepositoryHelper(config: RelayConfig): Promise<{repositoryRoot: string; helper: string}> {
-  let repositoryRoot: string;
-  let helper: string;
+async function runGit(repositoryRoot: string, args: string[]): Promise<string> {
   try {
-    repositoryRoot = await realpath(config.repositoryRoot);
-    helper = await realpath(resolve(repositoryRoot, config.helperPath));
+    const {stdout} = await execFileAsync("git", ["-C", repositoryRoot, ...args], {timeout: 10_000, windowsHide: true, encoding: "utf8"});
+    return stdout.trim();
   } catch {
-    throw new Error("RELAY_HELPER_PATH_INVALID");
+    throw new Error("REPOSITORY_IDENTITY_UNAVAILABLE");
   }
-  const relativeHelper = relative(repositoryRoot, helper);
-  if (!relativeHelper || isAbsolute(relativeHelper) || relativeHelper === ".." || relativeHelper.startsWith(`..${sep}`)) {
-    throw new Error("RELAY_HELPER_PATH_ESCAPE");
-  }
-  try {
-    if (!(await stat(helper)).isFile()) throw new Error("not a file");
-  } catch {
-    throw new Error("RELAY_HELPER_PATH_INVALID");
-  }
-  return {repositoryRoot, helper};
 }
 
-export async function runRelayExport(config: RelayConfig, handoffPath: string): Promise<RelayExport> {
-  const {repositoryRoot, helper} = await resolveRepositoryHelper(config);
+function parseOriginRepository(origin: string): string {
+  const value = origin.trim().replace(/\.git$/, "");
+  const match = value.match(/^(?:git@[^:]+:|https?:\/\/[^/]+\/|ssh:\/\/[^/]+\/)([^/]+\/[^/]+)$/);
+  if (!match || !/^[^/\s]+\/[^/\s]+$/.test(match[1])) throw new Error("REPOSITORY_IDENTITY_UNAVAILABLE");
+  return match[1];
+}
+
+export interface HandoffLocation {
+  handoffFile: string;
+  repositoryRoot: string;
+  handoffPath: string;
+  repository: string;
+}
+
+export async function resolveHandoffLocation(handoffFile: string): Promise<HandoffLocation> {
+  if (typeof handoffFile !== "string" || handoffFile.includes("\0") || (!isAbsolute(handoffFile) && !/^[A-Za-z]:[\\/]/.test(handoffFile))) throw new Error("HANDOFF_FILE_INVALID");
+  try {
+    const resolvedHandoff = await realpath(handoffFile);
+    if (!(await stat(resolvedHandoff)).isFile()) throw new Error("invalid file");
+    const rootCandidate = await runGit(await realpath(dirname(resolvedHandoff)), ["rev-parse", "--show-toplevel"]);
+    const repositoryRoot = await realpath(rootCandidate);
+    const relativeInput = relative(repositoryRoot, resolvedHandoff).replaceAll("\\", "/");
+    if (!relativeInput || isAbsolute(relativeInput) || relativeInput === ".." || relativeInput.startsWith(`..${sep}`)) throw new Error("escape");
+    const trackedPath = await runGit(repositoryRoot, ["ls-files", "--error-unmatch", "--full-name", "--", relativeInput]);
+    if (!trackedPath) throw new Error("untracked");
+    const repository = parseOriginRepository(await runGit(repositoryRoot, ["remote", "get-url", "origin"]));
+    return {handoffFile: resolvedHandoff, repositoryRoot, handoffPath: trackedPath.replaceAll("\\", "/"), repository};
+  } catch {
+    throw new Error("HANDOFF_LOCATION_INVALID");
+  }
+}
+
+export async function runRelayExport(config: RelayConfig, handoffFile: string): Promise<RelayExport> {
+  const location = await resolveHandoffLocation(handoffFile);
+  let helper: string;
+  try {
+    const trustedRoot = await realpath(dirname(config.exporterPath));
+    helper = await realpath(config.exporterPath);
+    const helperRelative = relative(trustedRoot, helper);
+    if (!helperRelative || isAbsolute(helperRelative) || helperRelative === ".." || helperRelative.startsWith(`..${sep}`) || !(await stat(helper)).isFile()) throw new Error("invalid exporter");
+  } catch {
+    throw new Error("EXPORTER_PATH_INVALID");
+  }
   let stdout: string;
   try {
-    ({stdout} = await execFileAsync(
-      config.pythonExecutable,
-      [helper, "relay-export", handoffPath],
-      {
-        cwd: repositoryRoot,
-        timeout: 30_000,
-        maxBuffer: 1_048_576,
-        windowsHide: true,
-        encoding: "utf8",
-      },
-    ));
-  } catch (error) {
-    const stderr = typeof (error as {stderr?: unknown}).stderr === "string"
-      ? (error as {stderr: string}).stderr.trim().slice(0, 2_000)
-      : "relay-export failed";
-    throw new Error(`RELAY_EXPORT_FAILED:${stderr}`);
+    ({stdout} = await execFileAsync(config.pythonExecutable, [helper, "relay-export", location.handoffPath], {
+      cwd: location.repositoryRoot, timeout: 30_000, maxBuffer: 1_048_576, windowsHide: true, encoding: "utf8",
+    }));
+  } catch {
+    throw new Error("RELAY_EXPORT_FAILED");
   }
   const trimmed = stdout.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
-    throw new Error("RELAY_EXPORT_STDOUT_INVALID");
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) throw new Error("RELAY_EXPORT_STDOUT_INVALID");
+  try {
+    const relay = validateRelayExport(JSON.parse(trimmed));
+    if (relay.repository !== location.repository || relay.handoff_path !== location.handoffPath) throw new Error("identity mismatch");
+    return relay;
+  } catch {
+    throw new Error("RELAY_EXPORT_INVALID");
   }
-  return validateRelayExport(JSON.parse(trimmed));
 }

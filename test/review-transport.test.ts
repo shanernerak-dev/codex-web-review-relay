@@ -15,7 +15,7 @@ function config(root: string, waitSlice = 1_000, turnDeadline = 60_000): RelayCo
   return {
     listenHost: "127.0.0.1", listenPort: 43127, allowedOrigins: ["http://127.0.0.1:43127"],
     bearerTokenPath: join(root, "token"), stateDbPath: join(root, "state.sqlite"),
-    repositoryRoot: root, pythonExecutable: "python", helperPath: "helper.py",
+    pythonExecutable: "python", exporterPath: join(root, "relay_export_helper.py"),
     nativeHostName: "dev.test.relay", extensionId: "a".repeat(32), requestWaitSliceMs: waitSlice, turnDeadlineMs: turnDeadline,
   };
 }
@@ -214,7 +214,7 @@ test("manual recovery requires explicit confirmation and respects the deadline",
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 
-test("manual recovery reuses the stored envelope after reviewed head drift", async () => {
+test("manual recovery rejects a changed fingerprint after reviewed head drift", async () => {
   const {root, store, coordinator, bridge} = fixture();
   const relay = relayFixture();
   const job = store.createOrGetJob(relay, relayFingerprint(relay), new Date(Date.now() + 60_000)).job;
@@ -228,10 +228,7 @@ test("manual recovery reuses the stored envelope after reviewed head drift", asy
     });
   }, async () => ({...relay, reviewed_head: "b".repeat(40)}));
   try {
-    const recovered = await service.recoverReview(relay.handoff_path, true);
-    assert.equal(recovered.job_id, job.job_id);
-    assert.equal(recovered.phase, "TURN_IDLE");
-    assert.equal(recovered.assistant_output, "historical recovery");
+    await assert.rejects(service.recoverReview(relay.handoff_path, true), /JOB_NOT_FOUND/);
   } finally { store.close(); rmSync(root, {recursive: true, force: true}); }
 });
 

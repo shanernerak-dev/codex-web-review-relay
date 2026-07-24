@@ -5,8 +5,7 @@ import { validateConfig } from "../src/config.ts";
 function validConfig() {
   return {
     listenHost: "127.0.0.1", listenPort: 43127, allowedOrigins: ["http://127.0.0.1:43127"],
-    bearerTokenPath: "token", stateDbPath: "state.sqlite", repositoryRoot: "repo",
-    pythonExecutable: "python", helperPath: "helper.py", nativeHostName: "dev.test.relay",
+    bearerTokenPath: "token", stateDbPath: "state.sqlite", pythonExecutable: "python", exporterPath: "C:\\relay\\relay_export_helper.py", nativeHostName: "dev.test.relay",
     extensionId: "a".repeat(32), requestWaitSliceMs: 300_000, turnDeadlineMs: 900_000,
   };
 }
@@ -29,9 +28,9 @@ test("config validates diagnostic logging controls", () => {
   assert.throws(() => validateConfig({...validConfig(), diagnosticLogRetainedFiles: 0}), /CONFIG_INVALID:diagnosticLogRetainedFiles/);
 });
 
-test("config rejects helper paths outside the repository-relative boundary", () => {
-  for (const helperPath of ["../outside.py", "..\\outside.py", "C:\\outside.py", "\\\\server\\share\\helper.py", "/tmp/helper.py"]) {
-    assert.throws(() => validateConfig({...validConfig(), helperPath}), /CONFIG_INVALID:helperPathBoundary/);
+test("config rejects invalid exporter paths", () => {
+  for (const exporterPath of ["../outside.py", "..\\outside.py", "relative\\outside.py"]) {
+    assert.throws(() => validateConfig({...validConfig(), exporterPath}), /CONFIG_INVALID:exporterPath/);
   }
-  assert.equal(validateConfig({...validConfig(), helperPath: "scripts/tools/helper.py"}).helperPath, "scripts/tools/helper.py");
+  assert.equal(validateConfig({...validConfig(), exporterPath: "C:\\relay\\relay_export_helper.py"}).exporterPath, "C:\\relay\\relay_export_helper.py");
 });

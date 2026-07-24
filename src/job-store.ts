@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { DatabaseSync } from "node:sqlite";
-import type { RelayExport } from "./relay-contract.ts";
+import { validateRelayExport, type RelayExport } from "./relay-contract.ts";
 
 export const JOB_PHASES = [
   "CREATED", "DISPATCHED", "USER_TURN_ACKED", "ASSISTANT_STARTED", "TURN_IDLE",
@@ -27,6 +27,7 @@ const TRANSITIONS: Record<JobPhase, ReadonlySet<JobPhase>> = {
 export interface StoredJob {
   job_id: string;
   fingerprint: string;
+  repository: string | null;
   handoff_path: string;
   handoff_sha256: string;
   relay_json: string | null;
@@ -79,6 +80,7 @@ export class JobStore extends EventEmitter {
       CREATE TABLE IF NOT EXISTS jobs (
         job_id TEXT PRIMARY KEY,
         fingerprint TEXT NOT NULL UNIQUE,
+        repository TEXT,
         handoff_path TEXT NOT NULL,
         handoff_sha256 TEXT NOT NULL,
         relay_json TEXT,
@@ -115,6 +117,7 @@ export class JobStore extends EventEmitter {
       );
     `);
     for (const statement of [
+      "ALTER TABLE jobs ADD COLUMN repository TEXT",
       "ALTER TABLE jobs ADD COLUMN session_id TEXT",
       "ALTER TABLE jobs ADD COLUMN ownership_generation INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE jobs ADD COLUMN relay_json TEXT",
@@ -128,6 +131,13 @@ export class JobStore extends EventEmitter {
       try { this.db.exec(statement); } catch (error) {
         if (!(error instanceof Error) || !error.message.includes("duplicate column name")) throw error;
       }
+    }
+    for (const row of this.db.prepare("SELECT job_id, relay_json FROM jobs WHERE repository IS NULL AND relay_json IS NOT NULL").all() as unknown as Array<{job_id: string; relay_json: string | null}>) {
+      if (!row.relay_json) continue;
+      try {
+        const relay = validateRelayExport(JSON.parse(row.relay_json));
+        this.db.prepare("UPDATE jobs SET repository = ? WHERE job_id = ? AND repository IS NULL").run(relay.repository, row.job_id);
+      } catch { /* Preserve unrecoverable legacy identity as NULL. */ }
     }
   }
 
@@ -149,9 +159,9 @@ export class JobStore extends EventEmitter {
       }
       const mismatches = this.db.prepare(`
         SELECT job_id FROM jobs
-        WHERE handoff_path = ? AND handoff_sha256 = ? AND phase = 'MISMATCH'
+        WHERE repository = ? AND handoff_path = ? AND handoff_sha256 = ? AND phase = 'MISMATCH'
         LIMIT 2
-      `).all(relay.handoff_path, relay.handoff_sha256) as unknown as Array<{job_id: string}>;
+      `).all(relay.repository, relay.handoff_path, relay.handoff_sha256) as unknown as Array<{job_id: string}>;
       if (mismatches.length > 0) {
         throw new Error(`MISMATCH_EXISTING_JOB:${mismatches[0].job_id}`);
       }
@@ -159,11 +169,11 @@ export class JobStore extends EventEmitter {
       const jobId = randomUUID();
       this.db.prepare(`
         INSERT INTO jobs (
-          job_id, fingerprint, handoff_path, handoff_sha256, reviewed_head,
+          job_id, fingerprint, repository, handoff_path, handoff_sha256, reviewed_head,
           relay_json, phase, recovery_from, result, error_code, deadline, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'CREATED', NULL, NULL, NULL, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'CREATED', NULL, NULL, NULL, ?, ?, ?)
       `).run(
-        jobId, fingerprint, relay.handoff_path, relay.handoff_sha256, relay.reviewed_head,
+        jobId, fingerprint, relay.repository, relay.handoff_path, relay.handoff_sha256, relay.reviewed_head,
         JSON.stringify(relay), deadline.toISOString(), now, now,
       );
       const job = this.getJob(jobId);
@@ -181,11 +191,18 @@ export class JobStore extends EventEmitter {
     return job;
   }
 
-  getJobByHandoff(handoffPath: string): StoredJob {
-    const jobs = this.db.prepare("SELECT * FROM jobs WHERE handoff_path = ? ORDER BY created_at DESC LIMIT 2").all(handoffPath) as unknown as StoredJob[];
-    if (jobs.length === 0) throw new Error("JOB_NOT_FOUND");
-    if (jobs.length > 1) throw new Error("HANDOFF_LOOKUP_AMBIGUOUS");
-    return jobs[0];
+  getJobByHandoff(repository: string, handoffPath?: string): StoredJob {
+    const jobs = handoffPath === undefined
+      ? this.db.prepare("SELECT * FROM jobs WHERE handoff_path = ? ORDER BY created_at DESC LIMIT 2").all(repository)
+      : this.db.prepare("SELECT * FROM jobs WHERE repository = ? AND handoff_path = ? ORDER BY created_at DESC LIMIT 2").all(repository, handoffPath);
+    const typedJobs = jobs as unknown as StoredJob[];
+    if (typedJobs.length === 0 && handoffPath !== undefined) {
+      const legacy = this.db.prepare("SELECT job_id FROM jobs WHERE repository IS NULL AND handoff_path = ? LIMIT 1").get(handoffPath) as {job_id: string} | undefined;
+      if (legacy) throw new Error("HISTORICAL_REPOSITORY_UNAVAILABLE");
+    }
+    if (typedJobs.length === 0) throw new Error("JOB_NOT_FOUND");
+    if (typedJobs.length > 1) throw new Error("HANDOFF_LOOKUP_AMBIGUOUS");
+    return typedJobs[0];
   }
 
   getActiveJob(): StoredJob | null {

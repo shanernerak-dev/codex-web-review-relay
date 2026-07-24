@@ -25,7 +25,7 @@ This relay automates steps 2-3 while keeping **you in control**: you manually op
 ```
 +-----------------------------------------------------------+
 |  Your coding agent (Codex / any MCP client)               |
-|  calls: request_review(handoff_path)                      |
+|  calls: request_review(handoff_file)                      |
 +-----------------------------+-----------------------------+
                               | Streamable HTTP (localhost, Bearer token)
                               v
@@ -51,6 +51,20 @@ This relay automates steps 2-3 while keeping **you in control**: you manually op
 ```
 
 **Single process**: Chrome launches the native host via Native Messaging. The same process holds the MCP server, SQLite job store, and native bridge. No daemons, no Docker, no cloud.
+
+The installation is user-scoped rather than repository-scoped. Each request supplies one absolute `handoff_file`; the relay resolves the Git root and local `origin` slug for that request. The current release remains single-active-job: different repositories can be reviewed sequentially, while queues and concurrent reviewer conversations are out of scope.
+
+The reviewer-visible envelope is frozen byte-for-byte in this order:
+
+```text
+Repository: owner/name
+Path: .agent/review_handoffs/...
+full Ref: refs/heads/...
+Reviewed head: ...
+Review stream: ...
+Effective round: ...
+Package kind: ...
+```
 
 ## Quick Start
 
@@ -101,31 +115,30 @@ cd codex-web-review-relay
 ```powershell
 pwsh -NoProfile -File scripts/install-native-host.ps1 `
   -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay" `
-  -RepositoryRoot "C:\path\to\your\repository"
 ```
 
 This generates:
 - A random 48-byte Bearer token
-- A `relay.config.json` pointing at your repository
+- A user-local `relay.config.json` and relay-owned generic exporter
 - A compiled launcher executable
 - A Chrome Native Messaging manifest registered for the current user
 - The `CODEX_WEB_REVIEW_RELAY_TOKEN` user environment variable
 
 > **Important**: the launcher embeds the absolute path to `src/cli.ts` in the current clone. **Do not move, rename, or delete this repository checkout after installation.** If you need to relocate it, re-run the installer with the new path.
 
-### 3. Configure the relay-export helper
+### 3. Use the relay-owned exporter
 
-The installer defaults `helperPath` in `relay.config.json` to `scripts/tools/relay_export_helper.py`, a repository-relative path for the generic helper example. Copy that helper into your target repository at this path, pass `-HelperPath` to the installer, or replace the value with your own repository helper.
+The installer copies the generic exporter to the user-local install root and records its absolute `exporterPath`. It is not bound to a repository. Each request resolves the repository from the absolute handoff file.
 
 If you don't have a helper yet, copy the minimal implementation from this repository at `scripts/tools/relay_export_helper.py` into your target repository. The generated config already uses this path:
 
 ```json
 {
-  "helperPath": "scripts/tools/relay_export_helper.py"
+  "exporterPath": "<USER_LOCAL_INSTALL_ROOT>/relay_export_helper.py"
 }
 ```
 
-The native host invokes the helper as `python <helperPath> relay-export <handoff_path>`. Your helper must:
+The native host invokes the exporter as `python <exporterPath> relay-export <repository-relative-handoff-path>` with the resolved repository as `cwd`. The exporter must:
 - Accept `relay-export` as the first argument and a repo-relative handoff path as the second.
 - On success: output exactly one JSON object to stdout (the relay-export schema).
 - On failure: exit non-zero with a stable error code on stderr.
@@ -137,7 +150,7 @@ Or create your own helper following the full contract in the [Integration](#inte
 The generic default is for new installations. If an existing repository already owns a helper, re-run the installer with that repository-relative path so a reinstall does not replace it with the generic example. For the single-crystal producer, preserve its current helper with:
 
 ```powershell
-.\scripts\install-native-host.ps1 -InstallRoot <relay-install-root> -RepositoryRoot C:\coding_projet\pwa1483_1d_scan_stress -HelperPath scripts/tools/check_stage_gate_readiness.py
+.\scripts\install-native-host.ps1 -InstallRoot <relay-install-root>
 ```
 
 An existing `relay.config.json` is not rewritten automatically; treat a reinstall or explicit config edit as a migration that must retain the producer's helper path.
@@ -221,7 +234,7 @@ Review scope: <what the reviewer should look at>
 Commit the handoff file (the helper verifies it is tracked and matches HEAD), then from your coding agent:
 
 ```
-request_review(handoff_path=".agent/review_handoffs/pr-1/main/round-01-review-request.md")
+request_review(handoff_file="C:\path\to\repo\.agent\review_handoffs\pr-1\main\round-01-review-request.md")
 ```
 
 The relay fills the ChatGPT composer with a trigger envelope, clicks send, waits for the assistant to finish, and returns the response text + SHA-256.
@@ -230,9 +243,9 @@ The relay fills the ChatGPT composer with a trigger envelope, clicks send, waits
 
 | Tool | Purpose |
 |------|---------|
-| `request_review(handoff_path)` | Create or resume a review job. Idempotent by fingerprint — retrying the same handoff never dispatches twice. |
-| `get_review_transport_status(job_id or handoff_path)` | Read current job phase without side effects. Exactly one lookup key. |
-| `recover_review(handoff_path, confirm_unsent=true)` | One-shot manual recovery after a terminal `MISMATCH`. Only use after confirming the original message was never sent. |
+| `request_review(handoff_file)` | Create or resume a review job. Idempotent by fingerprint — retrying the same handoff never dispatches twice. |
+| `get_review_transport_status(job_id or handoff_file)` | Read current job phase without side effects. `job_id` remains valid if the checkout moves or is deleted. |
+| `recover_review(handoff_file, confirm_unsent=true)` | One-shot manual recovery after a terminal `MISMATCH`. Only use after confirming the original message was never sent. |
 
 ### Job lifecycle
 
@@ -257,7 +270,7 @@ CREATED -> DISPATCHED -> USER_TURN_ACKED -> ASSISTANT_STARTED -> TURN_IDLE
 
 **Same-fingerprint retry**: idempotent. If the job is still active, the call joins the existing wait. If terminal, the stored result is returned immediately.
 
-**Manual recovery**: only `recover_review(handoff_path, confirm_unsent=true)` can re-dispatch after a terminal `MISMATCH`. This is a one-shot, audited operation — use it only after confirming the original message was never sent.
+**Manual recovery**: only `recover_review(handoff_file, confirm_unsent=true)` can re-dispatch after a terminal `MISMATCH`. This is a one-shot, audited operation — use it only after confirming the original message was never sent.
 
 `TURN_IDLE` means the browser transport finished. Branch formal-verdict handling by `target_kind`: for `pr`, `assistant_output` is only a short transport confirmation and the agent must read back the PR comment, checking actor, reviewed head, and scope; for `commit`, `assistant_output` is the complete formal verdict and its SHA-256 is the integrity check. Do not parse PR-mode `assistant_output` as the formal verdict.
 
@@ -270,7 +283,7 @@ MAX_REVIEW_ROUNDS = 5
 
 for round_num in range(1, MAX_REVIEW_ROUNDS + 1):
     handoff = create_handoff(round_num, kind="review-request" if round_num == 1 else "review-fix")
-    result = mcp_call("request_review", handoff_path=handoff)
+    result = mcp_call("request_review", handoff_file=handoff)
     if result["phase"] == "TURN_IDLE":
         if handoff.target_kind == "pr":
             verdict = read_github_verdict(pr=handoff.target_pr, reviewed_head=handoff.reviewed_head)
@@ -317,7 +330,7 @@ Given a `handoff_path` (repo-relative POSIX path), output a JSON object to stdou
 The native host invokes the helper as:
 
 ```
-python <helperPath> relay-export <handoff_path>
+python <exporterPath> relay-export <handoff_path>
 ```
 
 The helper must output exactly one JSON object to stdout on success, or exit non-zero with a stable error message on stderr on failure.
@@ -380,9 +393,8 @@ Edit the generated `relay.config.json`:
   "allowedOrigins": ["http://127.0.0.1:43127"],
   "bearerTokenPath": "<path to bearer-token.txt>",
   "stateDbPath": "<path to state.sqlite>",
-  "repositoryRoot": "<absolute path to your repo>",
   "pythonExecutable": "python",
-  "helperPath": "scripts/tools/your_relay_export_helper.py",
+  "exporterPath": "<user-local install root>/relay_export_helper.py",
   "nativeHostName": "dev.shanernerak.codex_web_review_relay",
   "extensionId": "kkdijpckhlminpolkllmmkldlljakfem",
   "requestWaitSliceMs": 300000,
@@ -391,8 +403,8 @@ Edit the generated `relay.config.json`:
 ```
 
 Key fields:
-- `repositoryRoot`: your repo's absolute path. The helper runs with this as cwd.
-- `helperPath`: repo-relative path to your relay-export helper. The installer and native runtime reject absolute paths, parent traversal, and symlink-resolved paths outside `repositoryRoot`.
+- `exporterPath`: relay-owned exporter in the user-local install root; it must resolve strictly inside the trusted install directory.
+- Each request supplies one absolute `handoff_file`; the relay resolves the Git root, tracked canonical relative path, and local `origin` `owner/name` without network access.
 - `requestWaitSliceMs`: max time one MCP call waits before returning in-progress (default 5 min).
 - `turnDeadlineMs`: hard deadline for the entire review turn (default 30 min).
 
@@ -415,7 +427,8 @@ If you want similar structure, see:
 
 ## Current Limitations (MVP)
 
-- Single repository per native host instance (config is static).
+- User-local installation can be reused sequentially by different repositories.
+- The current release allows one active review job and one armed reviewer conversation; concurrent jobs, queues, and multi-reviewer orchestration are out of scope.
 - One manually armed ChatGPT tab and one active job at a time; no automatic tab or conversation switching.
 - Windows-only installer (Linux/macOS needs manual Native Messaging manifest registration).
 - ChatGPT web only (no API, no other chat platforms).
@@ -442,7 +455,6 @@ npm run smoke:native
 ```powershell
 pwsh -NoProfile -File scripts/install-native-host.ps1 `
   -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay" `
-  -RepositoryRoot "C:\path\to\your\repository" `
   -Remove
 ```
 

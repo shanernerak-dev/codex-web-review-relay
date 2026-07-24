@@ -47,7 +47,7 @@ def git(*args: str, cwd: str) -> str:
         timeout=15,
     )
     if result.returncode != 0:
-        fail(f"GIT_ERROR:{result.stderr.strip()[:200]}")
+        fail("GIT_ERROR")
     return result.stdout.strip()
 
 
@@ -90,7 +90,7 @@ def main() -> None:
         fail("USAGE_ERROR")
 
     handoff_path = sys.argv[2].replace("\\", "/")
-    repo_root = str(Path(__file__).resolve().parent.parent.parent)
+    repo_root = str(Path.cwd().resolve())
 
     # 1. Validate path pattern
     m = HANDOFF_PATTERN.match(handoff_path)

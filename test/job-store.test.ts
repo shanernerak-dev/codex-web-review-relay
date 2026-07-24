@@ -110,3 +110,22 @@ test("a new manual arm does not inherit or mutate an unresolved job", () => with
   assert.equal(store.getJob(job.job_id).phase, "DISPATCHED");
   assert.equal(store.getJob(job.job_id).session_id, null);
 }));
+
+test("repository migration is idempotent and tolerates unrecoverable legacy rows", () => {
+  const root = mkdtempSync(join(tmpdir(), "review-relay-migration-"));
+  const path = join(root, "state.sqlite");
+  let store = new JobStore(path);
+  const relay = relayFixture();
+  const job = store.createOrGetJob(relay, relayFingerprint(relay), new Date(Date.now() + 60_000)).job;
+  store.db.prepare("UPDATE jobs SET repository = NULL WHERE job_id = ?").run(job.job_id);
+  store.close();
+  store = new JobStore(path);
+  assert.equal(store.getJob(job.job_id).repository, relay.repository);
+  store.db.prepare("UPDATE jobs SET repository = NULL, relay_json = NULL WHERE job_id = ?").run(job.job_id);
+  store.close();
+  assert.doesNotThrow(() => { store = new JobStore(path); });
+  assert.equal(store.getJob(job.job_id).repository, null);
+  assert.throws(() => store.getJobByHandoff(relay.repository, relay.handoff_path), /HISTORICAL_REPOSITORY_UNAVAILABLE/);
+  store.close();
+  rmSync(root, {recursive: true, force: true});
+});

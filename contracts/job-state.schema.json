@@ -1,11 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "schema_version": {"major": 1, "minor": 0},
+  "schema_version": {"major": 2, "minor": 0},
   "type": "object",
   "additionalProperties": false,
   "required": [
     "job_id",
     "fingerprint",
+    "repository",
     "target_kind",
     "target_id",
     "target_pr",
@@ -21,6 +22,7 @@
   "properties": {
     "job_id": {"type": "string", "format": "uuid"},
     "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "repository": {"type": ["string", "null"], "pattern": "^[^/\\s]+/[^/\\s]+$"},
     "target_kind": {"enum": ["pr", "commit"]},
     "target_id": {"type": "string", "minLength": 1},
     "target_pr": {"type": ["integer", "null"], "minimum": 1},

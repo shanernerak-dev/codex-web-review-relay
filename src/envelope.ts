@@ -14,6 +14,7 @@ export const RELAY_ONLY_VERDICT_INSTRUCTION =
 
 export function renderTriggerEnvelope(relay: RelayExport): TriggerEnvelope {
   const text = [
+    `Repository: ${relay.repository}`,
     `Path: ${relay.handoff_path}`,
     ...(relay.target_kind === "commit" ? [`Target kind: ${relay.target_kind}`, `Target ID: ${relay.target_id}`] : []),
     `full Ref: ${relay.full_ref}`,

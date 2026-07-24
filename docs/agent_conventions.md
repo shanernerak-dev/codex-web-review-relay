@@ -14,7 +14,7 @@
 - **两层依赖**：
   - L1 relay transport：零外部依赖，负责返回 transport completion、`assistant_output` 与 SHA-256。
   - formal verdict source 由 workflow mode 声明：PR-comment mode 以目标 PR comment readback 为正式来源，`assistant_output` 只作为非空短确认；commit-only relay-only mode 以完整 `assistant_output` + SHA-256 为正式来源，PR comment 不适用。
-  - **envelope 构成**：PR mode 保留 6 个动态字段 `handoff_path` / `full_ref` / `reviewed_head` / `review_stream` / `effective_round` / `package_kind` + PR-publication instruction；Stage 3 commit-only mode 在此基础上增加 `target_kind` / `target_id`，并使用 relay-only verdict instruction。两种 mode 都不内嵌 handoff 正文。见 `src/envelope.ts`。
+  - **envelope 构成**：字段顺序与大小写固定为 `Repository` / `Path` / `full Ref` / `Reviewed head` / `Review stream` / `Effective round` / `Package kind`，再加 mode-specific instruction。只发送 remote `owner/name` 与 canonical relative path，不发送本机绝对路径或 handoff 正文。见 `src/envelope.ts`。
 - **native host 不解析 handoff 正文**：只哈希文件并消费 helper 产出的 relay-export JSON。envelope **不提供正文兜底**——reviewer 必须经 `reviewed head` 在远端读 commit 与 handoff。
 - **PR fingerprint compatibility**：PR mode 的 fingerprint 保持 Stage 3 之前的字段序列 bit-for-bit；只有 commit-only identity 将 `target_kind` / `target_id` 纳入 fingerprint。升级时旧 PR terminal/active/MISMATCH job 必须继续命中同一 persisted row。
 - **relay-only capability**：native host 可接受 v1.0 extension 的 PR mode，但 commit-only request 必须在创建新 job 前、恢复前以及 transition 到 `RECONCILING` / claim recovery send 前要求 `relay-only-v1` capability。缺少 capability 时不得留下新的 job 或改变现有 recovery 计数，并在任何 DOM write/click 前以 `RELAY_ONLY_EXTENSION_UNSUPPORTED` fail closed。
@@ -37,7 +37,7 @@
   ```
 
 - **relay-export 必填字段**：`schema_version`、`repository`、`handoff_path`、`handoff_sha256`、`full_ref`、`reviewed_head`、`review_stream`、`effective_round`、`package_kind`、`normalized_scope`、`scope_sha256`；Stage 3 schema v1.1 另要求 `target_kind` / `target_id`，`target_pr` 仅在 PR mode 有值。v1.0 PR export 仍可由 consumer 推断 `target_kind=pr` 与 `target_id=pr-<N>`。约束：`scope_sha256 == sha256(canonical_json(normalized_scope))`。见 `src/relay-contract.ts` 与 `contracts/relay-export.schema.json`。
-- **helper CLI**：`python <helperPath> relay-export <handoff_path>`，`cwd = repositoryRoot`。成功：stdout **仅一个** JSON 对象；失败：非零退出 + stderr 稳定错误码。见 `src/repo-adapter.ts`。
+- **exporter CLI**：`python <exporterPath> relay-export <handoff_path>`，`cwd = resolvedRepositoryRoot`。成功：stdout **仅一个** JSON 对象；失败：非零退出 + stderr 稳定错误码。见 `src/repo-adapter.ts`。
 - **header fields 非 YAML frontmatter**：scope 等取自正文稳定 header 行（如 `Review scope:`），不要写成 frontmatter。
 
 ### Stage-scoped review round
@@ -58,7 +58,7 @@
 - **可返回 phase**：terminal + `SESSION_LOST` + `SEND_UNCERTAIN`（等待切片在 recovery 完成前超时）。后两者视为可重试。
 - **Formal verdict polling default**：确认 dispatch 成功且进入 `send-observed` 后，首次服务端 formal-result 观察窗口默认等待 **10 分钟**；首次仍无正式 verdict 时，后续以 **5 分钟**为默认轮询间隔，直到 terminal phase、hard deadline 或 fail-closed 停止条件。首次 10 分钟是深度评审观察窗口，不是 timeout，也不得触发重复 dispatch 或新 round。该默认同时适用于 PR-comment 与 commit-only review；PR-comment 仍必须以 GitHub PR comment 为 formal source。
 - **同 fingerprint 重试幂等**：active 则加入现有等待；terminal 则立即返回存储结果。
-- **手动恢复**：仅 `recover_review(handoff_path, confirm_unsent=true)` 可在 terminal `MISMATCH` 后重 dispatch，一次性，须确认原消息未发送。
+- **手动恢复**：仅 `recover_review(handoff_file, confirm_unsent=true)` 可在 terminal `MISMATCH` 后重 dispatch，一次性，须确认原消息未发送；使用完整 relay fingerprint 定位 job。
 - **`TURN_IDLE`**：表示浏览器 transport completion。PR mode 的 `assistant_output` 只应是非空短确认，formal verdict 必须从目标 PR comment readback；commit-only relay-only mode 的 `assistant_output` 是正式结论，且只能在 dispatch 后新增 assistant turn 已按稳定 DOM identity 完整 harvest、存在可在 reconnect 后复核的 turn-level completion evidence（例如该 turn 的 copy action）、内容保持稳定，并收到 native ACK 后 terminalize。仅观察到一段稳定文本、或曾经观察到 generating，都不是充分证据。`assistant_output_sha256` 仅用于完整性与重试审计，不替代 turn identity。
 
   **Turn parser baseline（参考 SyncNos 的概念设计）**：receipt 与 completion 必须共享同一个 conversation/turn 数据模型。实现应优先使用页面提供的稳定 turn identity（例如 enclosing `data-turn-id`），再使用 message identity；不能把每个 role node、最新 bubble 或文本相等性当作 turn identity。解析器应保留 conversation DOM document order、role、同一 turn 内的多个 message 顺序，并允许 virtualized shell 在后续 pass hydrate 后通过跨 pass harvest/cache 重建完整 ordered set。长内容提取是对已定位 turn 的完整 extraction/assembly，不能用 output 长度或固定首 token 窗口替代。完成判定必须绑定目标 assistant turn，而非任意 `Copy*` descendant、静默窗口或 generating 状态的单一快照。SyncNos 仅作为概念参考，不得复制其 AGPL implementation。

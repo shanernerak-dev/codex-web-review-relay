@@ -1,10 +1,8 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [Parameter(Mandatory)] [string]$InstallRoot,
-    [Parameter(Mandatory)] [string]$RepositoryRoot,
     [string]$NodeExecutable = 'node',
     [string]$PythonExecutable = 'python',
-    [string]$HelperPath = 'scripts/tools/relay_export_helper.py',
     [switch]$Remove
 )
 
@@ -13,39 +11,21 @@ $hostName = 'dev.shanernerak.codex_web_review_relay'
 $extensionId = 'kkdijpckhlminpolkllmmkldlljakfem'
 $tokenEnvVar = 'CODEX_WEB_REVIEW_RELAY_TOKEN'
 $install = [System.IO.Path]::GetFullPath($InstallRoot)
-$repo = [System.IO.Path]::GetFullPath($RepositoryRoot)
 $companion = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $register = Join-Path $PSScriptRoot 'register-native-host.ps1'
 $manifestPath = Join-Path $install 'native-host-manifest.json'
 
 if ($Remove) {
-    if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
-        & $register -ManifestPath $manifestPath -Remove
-    }
+    if (Test-Path -LiteralPath $manifestPath -PathType Leaf) { & $register -ManifestPath $manifestPath -Remove }
     [Environment]::SetEnvironmentVariable($tokenEnvVar, $null, 'User')
-    if ((Test-Path -LiteralPath $install -PathType Container) -and $PSCmdlet.ShouldProcess($install, 'Remove review relay user-local installation')) {
-        Remove-Item -LiteralPath $install -Recurse -Force
-    }
+    if ((Test-Path -LiteralPath $install -PathType Container) -and $PSCmdlet.ShouldProcess($install, 'Remove review relay user-local installation')) { Remove-Item -LiteralPath $install -Recurse -Force }
     return
 }
 
-if (-not (Test-Path -LiteralPath $repo -PathType Container)) { throw "RepositoryRoot does not exist: $repo" }
-if ([System.IO.Path]::IsPathRooted($HelperPath)) { throw 'HelperPath must be repository-relative.' }
-if (($HelperPath -split '[\\/]') -contains '..') { throw 'HelperPath must not contain parent traversal.' }
-$repoCanonical = (Resolve-Path -LiteralPath $repo -ErrorAction Stop).Path.TrimEnd('\')
-$helperCandidate = [System.IO.Path]::GetFullPath((Join-Path $repo $HelperPath))
-if (-not (Test-Path -LiteralPath $helperCandidate -PathType Leaf)) { throw "HelperPath does not resolve to a file: $HelperPath" }
-$helperCanonical = (Resolve-Path -LiteralPath $helperCandidate -ErrorAction Stop).Path
-$repoPrefix = "$repoCanonical\"
-if (-not $helperCanonical.StartsWith($repoPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw 'HelperPath must resolve strictly inside RepositoryRoot.'
-}
-$HelperPath = $HelperPath.Replace('\', '/')
 $node = (Get-Command $NodeExecutable -ErrorAction Stop).Source
 $python = (Get-Command $PythonExecutable -ErrorAction Stop).Source
 if (-not $PSCmdlet.ShouldProcess($install, 'Install review relay native host')) { return }
 New-Item -ItemType Directory -Path $install -Force | Out-Null
-
 $principal = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 & icacls.exe $install /inheritance:r /grant:r "${principal}:(OI)(CI)F" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Failed to restrict install directory ACL.' }
@@ -53,6 +33,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Failed to restrict install directory ACL.' }
 $tokenPath = Join-Path $install 'bearer-token.txt'
 $statePath = Join-Path $install 'state.sqlite'
 $diagnosticLogPath = Join-Path $install 'review-relay.events.jsonl'
+$exporterPath = Join-Path $install 'relay_export_helper.py'
 $configPath = Join-Path $install 'relay.config.json'
 $launcherPath = Join-Path $install 'codex-web-review-relay.exe'
 $generatedSourcePath = Join-Path $install 'launcher.generated.cs'
@@ -64,11 +45,12 @@ $tokenBytes = [byte[]]::new(48)
 $tokenText = [Convert]::ToBase64String($tokenBytes)
 [System.IO.File]::WriteAllText($tokenPath, $tokenText, [System.Text.UTF8Encoding]::new($false))
 [Environment]::SetEnvironmentVariable($tokenEnvVar, $tokenText, 'User')
+[System.IO.File]::Copy((Join-Path $companion 'scripts\tools\relay_export_helper.py'), $exporterPath, $true)
 
 $config = [ordered]@{
     listenHost = '127.0.0.1'; listenPort = 43127; allowedOrigins = @('http://127.0.0.1:43127')
-    bearerTokenPath = $tokenPath; stateDbPath = $statePath; repositoryRoot = $repo
-    pythonExecutable = $python; helperPath = $HelperPath
+    bearerTokenPath = $tokenPath; stateDbPath = $statePath
+    pythonExecutable = $python; exporterPath = $exporterPath
     nativeHostName = $hostName; extensionId = $extensionId
     requestWaitSliceMs = 300000; turnDeadlineMs = 1800000
     diagnosticLogPath = $diagnosticLogPath; diagnosticLogLevel = 'info'
@@ -83,18 +65,13 @@ $source = $source.Replace('@@NODE_B64@@', (ConvertTo-B64 $node)).Replace('@@CLI_
 if (Test-Path -LiteralPath $launcherPath) { Remove-Item -LiteralPath $launcherPath -Force }
 $frameworkRoot = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
 $compiler = Join-Path $frameworkRoot 'csc.exe'
-if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {
-    $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
-}
+if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
 if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) { throw 'C# compiler csc.exe was not found.' }
 & $compiler /nologo /target:exe "/out:$launcherPath" $generatedSourcePath
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) { throw 'Native host launcher compilation failed.' }
 Remove-Item -LiteralPath $generatedSourcePath -Force
 
-$manifest = [ordered]@{
-    name = $hostName; description = 'Codex Web Review Relay native messaging host'
-    path = $launcherPath; type = 'stdio'; allowed_origins = @("chrome-extension://$extensionId/")
-}
+$manifest = [ordered]@{ name = $hostName; description = 'Codex Web Review Relay native messaging host'; path = $launcherPath; type = 'stdio'; allowed_origins = @("chrome-extension://$extensionId/") }
 [System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 3), [System.Text.UTF8Encoding]::new($false))
 & $register -ManifestPath $manifestPath
 [pscustomobject]@{InstallRoot=$install; ExtensionId=$extensionId; ManifestPath=$manifestPath; ConfigPath=$configPath; TokenPath=$tokenPath; TokenEnvVar=$tokenEnvVar}

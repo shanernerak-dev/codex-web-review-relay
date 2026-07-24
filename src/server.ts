@@ -82,7 +82,7 @@ export function createRelayServer(
       const activeSession = store.getActiveSession();
       sendJson(response, 200, {
         status: "ok",
-        schema_version: {major: 1, minor: 0},
+        schema_version: {major: 2, minor: 0},
         mcp_protocol_version: MCP_PROTOCOL_VERSION,
         active_job: activeJob ? {job_id: activeJob.job_id, phase: activeJob.phase} : null,
         active_session: activeSession ? {session_id: activeSession.session_id, lease_expires_at: activeSession.lease_expires_at} : null,
@@ -130,8 +130,8 @@ export function createRelayServer(
         result: {
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: {tools: {listChanged: false}},
-          serverInfo: {name: "codex-web-review-relay", version: "0.1.0"},
-          instructions: "PR-comment reviews require external GitHub readback; commit-only relay reviews return the formal verdict in assistant_output.",
+          serverInfo: {name: "codex-web-review-relay", version: "2.0.0"},
+          instructions: "MCP tools v2 require an absolute handoff_file. PR-comment reviews require external GitHub readback; commit-only relay reviews return the formal verdict in assistant_output.",
         },
       });
       return;
@@ -154,7 +154,7 @@ export function createRelayServer(
       const params = message.params ?? {};
       const name = params.name;
       const args = params.arguments;
-      if (!transport || typeof name !== "string" || args === null || typeof args !== "object" || Array.isArray(args)) {
+          if (!transport || typeof name !== "string" || args === null || typeof args !== "object" || Array.isArray(args)) {
         sendJson(response, 200, jsonRpcError(message.id, -32602, "Invalid tool call"));
         return;
       }
@@ -162,19 +162,19 @@ export function createRelayServer(
         let result: unknown;
         if (name === "request_review") {
           const keys = Object.keys(args as Record<string, unknown>);
-          if (keys.length !== 1 || typeof (args as Record<string, unknown>).handoff_path !== "string") {
+          if (keys.length !== 1 || typeof (args as Record<string, unknown>).handoff_file !== "string") {
             throw new Error("REQUEST_REVIEW_INPUT_INVALID");
           }
-          result = await transport.requestReview((args as {handoff_path: string}).handoff_path);
+          result = await transport.requestReview((args as {handoff_file: string}).handoff_file);
         } else if (name === "recover_review") {
           const value = args as Record<string, unknown>;
           const keys = Object.keys(value).sort();
-          if (keys.length !== 2 || typeof value.handoff_path !== "string" || value.confirm_unsent !== true) {
+          if (keys.length !== 2 || typeof value.handoff_file !== "string" || value.confirm_unsent !== true) {
             throw new Error("MANUAL_RECOVERY_INPUT_INVALID");
           }
-          result = await transport.recoverReview(value.handoff_path, true);
+          result = await transport.recoverReview(value.handoff_file, true);
         } else if (name === "get_review_transport_status") {
-          result = await transport.getStatus(args as {job_id?: string; handoff_path?: string});
+          result = await transport.getStatus(args as {job_id?: string; handoff_file?: string});
         } else if (name === "get_review_diagnostics") {
           const value = args as Record<string, unknown>;
           const keys = Object.keys(value);

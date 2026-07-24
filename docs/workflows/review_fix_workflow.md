@@ -29,7 +29,7 @@ commit-only relay-only mode：assistant_output 承载完整 verdict；PR comment
 6. **`git push`**。
 7. 本地校验：`python <helper> relay-export <handoff_path>` 确认 JSON 合法。
 8. 若维护 canonical round ledger，trigger 前先记录本轮 identity、implementation commit 及 review/transport pending；精确 `reviewed_head` 以随后包含该记录的 handoff commit 和 relay-export 为准，不在 commit 正文中自引用预写自身 SHA。结果存在后再追加 verdict、job、transport 与 formal-source facts。
-9. 触发 `request_review(handoff_path=...)`。
+9. 触发 `request_review(handoff_file=<absolute handoff file>)`。
 10. PR-comment mode：接收 `TURN_IDLE` 的短 `assistant_output` 作为 transport evidence；随后读取目标 PR comment，按当前 `reviewed_head`、`Review scope` 和预期 actor 核验并解析 formal verdict。commit-only relay-only mode：按 `target_kind` / `target_id` 验证无 PR target，并要求 MCP result 直接返回完整 `assistant_output`（核对首尾 anchor 与 SHA-256）。
 11. PR-comment formal verdict 为 `PASS` → 结束，`REQUEST CHANGES` → 回步骤 1；commit-only relay-only mode 的完整 `assistant_output` 按同一 verdict parser 处理。如果 web reviewer 页面已完成但 relay 未传回全文，立即停止并请 Maintainer 人工转接，不以 browser readback 替代 transport gate；下一轮 handoff 将该全文传输失败列为首要问题。`HUMAN DECISION REQUIRED` / `COMMENT` → 停止并报告，**不擅自继续**。
 

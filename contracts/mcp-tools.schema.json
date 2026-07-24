@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "schema_version": {"major": 1, "minor": 0},
+  "schema_version": {"major": 2, "minor": 0},
   "mcp_protocol_version": "2025-11-25",
   "tools": [
     {
@@ -9,12 +9,9 @@
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["handoff_path"],
+        "required": ["handoff_file"],
         "properties": {
-          "handoff_path": {
-            "type": "string",
-            "pattern": "^\\.agent/review_handoffs/(?:pr-[1-9][0-9]*|review-[a-z0-9][a-z0-9-]*)/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"
-          }
+          "handoff_file": {"type": "string", "minLength": 1}
         }
       }
     },
@@ -24,12 +21,9 @@
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["handoff_path", "confirm_unsent"],
+        "required": ["handoff_file", "confirm_unsent"],
         "properties": {
-          "handoff_path": {
-            "type": "string",
-            "pattern": "^\\.agent/review_handoffs/(?:pr-[1-9][0-9]*|review-[a-z0-9][a-z0-9-]*)/[a-z0-9][a-z0-9-]*/round-(?:0[1-9]|[1-9][0-9]+)-(review-request|review-fix|evidence-amendment|human-decision)\\.md$"
-          },
+          "handoff_file": {"type": "string", "minLength": 1},
           "confirm_unsent": {"const": true}
         }
       }
@@ -48,8 +42,8 @@
           {
             "type": "object",
             "additionalProperties": false,
-            "required": ["handoff_path"],
-            "properties": {"handoff_path": {"type": "string", "minLength": 1}}
+            "required": ["handoff_file"],
+            "properties": {"handoff_file": {"type": "string", "minLength": 1}}
           }
         ]
       }

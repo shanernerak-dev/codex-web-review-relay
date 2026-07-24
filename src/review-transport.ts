@@ -3,7 +3,7 @@ import { JobCoordinator } from "./job-coordinator.ts";
 import { JobStore, type JobPhase, type StoredJob } from "./job-store.ts";
 import { NativeBridge } from "./native-protocol.ts";
 import { relayFingerprint, validateRelayExport, type RelayExport } from "./relay-contract.ts";
-import { runRelayExport } from "./repo-adapter.ts";
+import { resolveHandoffLocation, runRelayExport } from "./repo-adapter.ts";
 import type { RelayConfig } from "./config.ts";
 
 export type NativeDispatchWriter = (message: Record<string, unknown>) => void;
@@ -21,6 +21,7 @@ export interface TransportStatus {
   target_id: string;
   target_pr: number | null;
   handoff_path: string;
+  repository: string | null;
   handoff_sha256: string;
   reviewed_head: string;
   phase: JobPhase;
@@ -53,6 +54,7 @@ function publicStatus(job: StoredJob): TransportStatus {
   return {
     job_id: job.job_id,
     fingerprint: job.fingerprint,
+    repository: job.repository,
     ...identity,
     handoff_path: job.handoff_path,
     handoff_sha256: job.handoff_sha256,
@@ -128,8 +130,8 @@ export class ReviewTransportService {
     this.coordinator.transition(active.job_id, "BLOCKED", "RELAY_ONLY_EXTENSION_UNSUPPORTED");
   }
 
-  async requestReview(handoffPath: string): Promise<TransportStatus> {
-    const relay = await this.exportRelay(this.config, handoffPath);
+  async requestReview(handoffFile: string): Promise<TransportStatus> {
+    const relay = await this.exportRelay(this.config, handoffFile);
     const fingerprint = relayFingerprint(relay);
     const existing = this.inFlight.get(fingerprint);
     if (existing) return existing;
@@ -139,10 +141,12 @@ export class ReviewTransportService {
     finally { if (this.inFlight.get(fingerprint) === operation) this.inFlight.delete(fingerprint); }
   }
 
-  async recoverReview(handoffPath: string, confirmUnsent: boolean): Promise<TransportStatus> {
+  async recoverReview(handoffFile: string, confirmUnsent: boolean): Promise<TransportStatus> {
     if (confirmUnsent !== true) throw new Error("MANUAL_RECOVERY_CONFIRMATION_REQUIRED");
-    const relay = await this.exportRelay(this.config, handoffPath);
-    const persisted = this.store.getJobByHandoff(relay.handoff_path);
+    const relay = await this.exportRelay(this.config, handoffFile);
+    const persisted = this.store.getJobByFingerprint(relayFingerprint(relay));
+    if (!persisted) throw new Error("JOB_NOT_FOUND");
+    if (persisted.repository === null) throw new Error("HISTORICAL_REPOSITORY_UNAVAILABLE");
     if (persisted.handoff_sha256 !== relay.handoff_sha256) throw new Error("HANDOFF_LOOKUP_DRIFT");
     const historicalRelay = validateRelayExport(this.store.getRelayExport(persisted.job_id));
     const fingerprint = persisted.fingerprint;
@@ -268,21 +272,24 @@ export class ReviewTransportService {
     }
   }
 
-  async getStatus(input: {job_id?: string; handoff_path?: string}): Promise<TransportStatus> {
+  async getStatus(input: {job_id?: string; handoff_file?: string; handoff_path?: string}): Promise<TransportStatus> {
     const hasJob = typeof input.job_id === "string";
-    const hasPath = typeof input.handoff_path === "string";
+    const handoffFile = input.handoff_file ?? input.handoff_path;
+    const hasPath = typeof handoffFile === "string";
     if (hasJob === hasPath) throw new Error("STATUS_LOOKUP_KEY_INVALID");
     if (hasJob) return publicStatus(this.expirePastDeadline(this.store.getJob(input.job_id as string)));
 
-    const relay = await this.exportRelay(this.config, input.handoff_path as string);
-    const stored = this.store.getJobByHandoff(relay.handoff_path);
-    if (
-      stored.handoff_sha256 !== relay.handoff_sha256 ||
-      stored.reviewed_head !== relay.reviewed_head ||
-      stored.fingerprint !== relayFingerprint(relay)
-    ) {
-      throw new Error("HANDOFF_LOOKUP_DRIFT");
+    // Internal callers from pre-v2 tests may still provide the old relative key;
+    // the MCP server rejects that shape before reaching this method.
+    if (input.handoff_file === undefined && typeof input.handoff_path === "string") {
+      const relay = await this.exportRelay(this.config, input.handoff_path);
+      const stored = this.store.getJobByHandoff(relay.handoff_path);
+      if (stored.handoff_sha256 !== relay.handoff_sha256 || stored.reviewed_head !== relay.reviewed_head || stored.fingerprint !== relayFingerprint(relay)) throw new Error("HANDOFF_LOOKUP_DRIFT");
+      return publicStatus(this.expirePastDeadline(stored));
     }
+
+    const location = await resolveHandoffLocation(handoffFile as string);
+    const stored = this.store.getJobByHandoff(location.repository, location.handoffPath);
     return publicStatus(this.expirePastDeadline(stored));
   }
 }

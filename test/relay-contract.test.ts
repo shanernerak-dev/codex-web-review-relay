@@ -75,9 +75,10 @@ test("fingerprint and six locator fields plus fixed publication instruction are 
   const relay = validateRelayExport(relayFixture());
   assert.equal(relayFingerprint(relay), relayFingerprint({...relay}));
   const envelope = renderTriggerEnvelope(relay);
-  assert.equal(envelope.text.split("\n").length, 7);
+  assert.equal(envelope.text.split("\n").length, 8);
   assert.equal(envelope.text.split("\n").at(-1), FORMAL_REVIEW_PUBLICATION_INSTRUCTION);
-  assert.match(envelope.text, /^Path: /);
+  assert.match(envelope.text, /^Repository: [^\n]+\nPath: /);
+  assert.doesNotMatch(envelope.text, /[A-Za-z]:[\\/]|handoff_file|repositoryRoot/);
   assert.match(envelope.text, /Reviewed head: a{40}/);
   assert.match(envelope.sha256, /^[0-9a-f]{64}$/);
   assert.doesNotMatch(envelope.text, /normalized_scope|handoff_sha256/);
@@ -112,7 +113,7 @@ test("commit-only export has a stable target identity and relay-only envelope", 
   assert.equal(relay.target_id, "review-local-run");
   assert.equal(relay.target_pr, null);
   const envelope = renderTriggerEnvelope(relay);
-  assert.equal(envelope.text.split("\n").length, 9);
+  assert.equal(envelope.text.split("\n").length, 10);
   assert.match(envelope.text, /Target kind: commit/);
   assert.match(envelope.text, /Target ID: review-local-run/);
   assert.equal(envelope.text.split("\n").at(-1), RELAY_ONLY_VERDICT_INSTRUCTION);
