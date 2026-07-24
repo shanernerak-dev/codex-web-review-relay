@@ -6,3 +6,5 @@ node_modules/
 coverage/
 .env
 reference/
+dist/
+__pycache__/

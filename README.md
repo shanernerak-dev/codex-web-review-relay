@@ -54,6 +54,10 @@ This relay automates steps 2-3 while keeping **you in control**: you manually op
 
 The installation is user-scoped rather than repository-scoped. Each request supplies one absolute `handoff_file`; the relay resolves the Git root and local `origin` slug for that request. The current release remains single-active-job: different repositories can be reviewed sequentially, while queues and concurrent reviewer conversations are out of scope.
 
+## v0.3.0 Release
+
+`v0.3.0` is the first formal public release. Install from the GitHub Release assets: `codex-web-review-relay-extension-v0.3.0.zip`, `codex-web-review-relay-native-host-windows-v0.3.0.zip`, and `SHA256SUMS.txt`. GitHub-generated source archives are not installation assets.
+
 The reviewer-visible envelope is frozen byte-for-byte in two mode-specific contracts. PR mode uses:
 
 ```text
@@ -74,9 +78,13 @@ Commit-only mode inserts `Target kind: commit` and `Target ID: ...` immediately 
 
 - **Node.js >= 24** (uses `--experimental-strip-types` for native TypeScript)
 - **Chrome** (any recent version with Manifest V3 + Native Messaging support)
-- **Python** (for the repository-side `relay-export` helper; see Integration)
-- **Python dev dependencies** for the schema test (`python -m pip install -r requirements-dev.txt`)
-- **Windows** (installer is PowerShell-based; Linux/macOS adaptation is straightforward but not yet scripted)
+- **Python >= 3.10** (used by the relay-owned exporter)
+- **Git CLI** (used to resolve repository identity and verify the tracked handoff)
+- **PowerShell 7 / `pwsh`**
+- **.NET Framework `csc.exe`** available on the system (used to compile the launcher)
+- **Windows** (the v0.3.0 installer is Windows-only)
+
+`requirements-dev.txt` and schema-test dependencies are development prerequisites, not end-user installation prerequisites.
 
 ### Platform and Account Dependencies
 
@@ -103,16 +111,15 @@ For PR mode, the PR comment is the formal verdict record and requires the review
 - **Automated PR comment**: bind the appropriate platform connector (e.g. [GitHub App](https://chatgpt.com/gpts)) to the ChatGPT account. Required for both public and private repos when you want the reviewer to post comments automatically.
 - **Manual PR comment**: no connector needed. The reviewer responds in the conversation; you copy the verdict to a PR comment yourself.
 
-**Adapting to GitLab/Gitee**: the fixed publication instruction lives in `src/envelope.ts` (not in the repository-side helper). To target a different platform, modify `FORMAL_REVIEW_PUBLICATION_INSTRUCTION` in the companion relay source and ensure the web reviewer has read/write access to that platform.
+**Adapting to GitLab/Gitee**: the fixed publication instruction lives in `src/envelope.ts` (not in the relay-owned exporter). To target a different platform, modify `FORMAL_REVIEW_PUBLICATION_INSTRUCTION` in the companion relay source and ensure the web reviewer has read/write access to that platform.
 
-### 1. Clone this repository
+### 1. Download the release assets
 
-```powershell
-git clone https://github.com/shanernerak-dev/codex-web-review-relay.git
-cd codex-web-review-relay
-```
+Download the two ZIP assets and `SHA256SUMS.txt` from the `v0.3.0` GitHub Release and verify the checksums before extracting them. Do not use a GitHub source archive as the installation package.
 
-### 2. Install the native host
+### 2. Install the native host from the Windows asset
+
+Extract `codex-web-review-relay-native-host-windows-v0.3.0.zip`, then run from that extracted directory:
 
 ```powershell
 pwsh -NoProfile -File scripts/install-native-host.ps1 -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay"
@@ -125,7 +132,7 @@ This generates:
 - A Chrome Native Messaging manifest registered for the current user
 - The `CODEX_WEB_REVIEW_RELAY_TOKEN` user environment variable
 
-> **Important**: the launcher embeds the absolute path to `src/cli.ts` in the current clone. **Do not move, rename, or delete this repository checkout after installation.** If you need to relocate it, re-run the installer with the new path.
+The installer copies a self-contained runtime to `<InstallRoot>\runtime`, and the launcher binds to `<InstallRoot>\runtime\src\cli.ts`. After installation, the extracted ZIP directory may be deleted.
 
 ### 3. Use the relay-owned exporter
 
@@ -154,13 +161,13 @@ Repository-owned helpers are no longer part of the native-host installation cont
 .\scripts\install-native-host.ps1 -InstallRoot <relay-install-root>
 ```
 
-An existing `relay.config.json` is not rewritten automatically; treat a reinstall as the migration point.
+Existing installations do not migrate themselves. Re-running the v0.3.0 installer rebuilds the installation configuration, installs the relay-owned exporter and rotates the Bearer token. See `MIGRATION.md` in the native-host asset for the full procedure.
 
 ### 4. Load the extension
 
 1. Open `chrome://extensions`
 2. Enable **Developer mode**
-3. Click **Load unpacked** and select the `extension/` directory from this repo
+3. Extract `codex-web-review-relay-extension-v0.3.0.zip` and click **Load unpacked** on the extracted directory. Its root must directly contain `manifest.json`.
 
 The extension ID is fixed: `kkdijpckhlminpolkllmmkldlljakfem`.
 
@@ -232,7 +239,7 @@ Review scope: <what the reviewer should look at>
 <your content here>
 ```
 
-Commit the handoff file (the helper verifies it is tracked and matches HEAD), then from your coding agent:
+Commit the handoff file (the relay-owned exporter verifies it is tracked and matches HEAD), then from your coding agent:
 
 ```
 request_review(handoff_file="C:\path\to\repo\.agent\review_handoffs\pr-1\main\round-01-review-request.md")
@@ -303,7 +310,7 @@ Each round gets a unique fingerprint (round number is part of the relay export),
 
 The relay includes a **relay-owned exporter** that produces a `relay-export` JSON from a handoff file. Producer repositories only need to generate the canonical tracked handoff; no helper copy or repository registration is required.
 
-### What the helper must do
+### What the relay-owned exporter does
 
 Given a `handoff_path` (repo-relative POSIX path), output a JSON object to stdout:
 
@@ -326,15 +333,15 @@ Given a `handoff_path` (repo-relative POSIX path), output a JSON object to stdou
 }
 ```
 
-### Minimal helper implementation
+### Relay-owned exporter contract
 
-The native host invokes the helper as:
+The native host invokes the relay-owned exporter as:
 
 ```
 python <config-directory>/relay_export_helper.py relay-export <handoff_path>
 ```
 
-The helper must output exactly one JSON object to stdout on success, or exit non-zero with a stable error message on stderr on failure.
+The relay-owned exporter must output exactly one JSON object to stdout on success, or exit non-zero with a stable error message on stderr on failure.
 
 The relay-owned exporter is implemented at `scripts/tools/relay_export_helper.py`. The minimum contract:
 
@@ -364,7 +371,7 @@ Review scope: <what the reviewer should look at>
 <your content here>
 ```
 
-The **native host** does not parse the handoff body — it only consumes the validated relay-export JSON produced by the helper. The **helper** is responsible for parsing and validating the handoff header fields. PR mode keeps the six-field envelope and PR-comment instruction. Commit-only mode adds `Target kind` / `Target ID` and instructs the reviewer to return the complete formal verdict in `assistant_output` without a PR comment.
+The **native host** does not parse the handoff body — it only consumes the validated relay-export JSON produced by the relay-owned exporter. The exporter is responsible for parsing and validating the handoff header fields. PR mode keeps the six-field envelope and PR-comment instruction. Commit-only mode adds `Target kind` / `Target ID` and instructs the reviewer to return the complete formal verdict in `assistant_output` without a PR comment.
 
 Commit-only handoff format:
 

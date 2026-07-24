@@ -130,7 +130,7 @@ export function createRelayServer(
         result: {
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: {tools: {listChanged: false}},
-          serverInfo: {name: "codex-web-review-relay", version: "2.0.0"},
+          serverInfo: {name: "codex-web-review-relay", version: "0.3.0"},
           instructions: "MCP tools v2 require an absolute handoff_file. PR-comment reviews require external GitHub readback; commit-only relay reviews return the formal verdict in assistant_output.",
         },
       });

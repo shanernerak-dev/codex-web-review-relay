@@ -52,6 +52,10 @@
 
 安装面向本机用户，而不是某个仓库。每次请求提供一个绝对 `handoff_file`，relay 为该请求解析 Git root 和本地 `origin` slug。当前版本仍是 single-active-job：不同仓库可以顺序复用，但不支持队列或并发 reviewer conversation。
 
+## v0.3.0 Release
+
+`v0.3.0` 是首个正式公开 Release。请从 GitHub Release 下载 `codex-web-review-relay-extension-v0.3.0.zip`、`codex-web-review-relay-native-host-windows-v0.3.0.zip` 和 `SHA256SUMS.txt`。GitHub 自动生成的 source archives 不是安装资产。
+
 Reviewer 可见的 envelope 按 mode 分为两套逐字冻结合同。PR mode 使用：
 
 ```text
@@ -72,9 +76,13 @@ Commit-only mode 在 `Path:` 后立即插入 `Target kind: commit` 与 `Target I
 
 - **Node.js >= 24**（使用 `--experimental-strip-types` 原生运行 TypeScript）
 - **Chrome**（任何支持 Manifest V3 + Native Messaging 的近期版本）
-- **Python**（用于仓库侧的 `relay-export` helper；见“集成”章节）
-- **Python dev dependencies**（schema 测试需要，执行 `python -m pip install -r requirements-dev.txt`）
-- **Windows**（安装器基于 PowerShell；Linux/macOS 适配直接但尚未脚本化）
+- **Python >= 3.10**（relay-owned exporter 使用）
+- **Git CLI**（解析 repository identity 并验证 tracked handoff）
+- **PowerShell 7 / `pwsh`**
+- **系统可用的 .NET Framework `csc.exe`**（编译 launcher）
+- **Windows**（v0.3.0 installer 仅支持 Windows）
+
+`requirements-dev.txt` 和 schema test dependencies 属于开发前置条件，不是终端用户安装前置条件。
 
 ### 平台与账号依赖
 
@@ -101,16 +109,15 @@ Transport diagnostics 由 native host 写入安装时配置的固定 `diagnostic
 - **自动 PR comment**：将对应平台连接器（如 [GitHub App](https://chatgpt.com/gpts)）绑定到 ChatGPT 账号。无论公开/私有仓库，自动发布评论都需要连接器。
 - **手动 PR comment**：无需连接器。评审者在对话中回复，你手动将结论复制到 PR comment。
 
-**适配 GitLab/Gitee**：固定发布指令位于 `src/envelope.ts`（而非仓库侧 helper 中）。要适配其他平台，需修改 companion relay 源码中的 `FORMAL_REVIEW_PUBLICATION_INSTRUCTION`，并确保 Web 评审者对该平台具有读写访问能力。
+**适配 GitLab/Gitee**：固定发布指令位于 `src/envelope.ts`（而非 relay-owned exporter 中）。要适配其他平台，需修改 companion relay 源码中的 `FORMAL_REVIEW_PUBLICATION_INSTRUCTION`，并确保 Web 评审者对该平台具有读写访问能力。
 
-### 1. 克隆本仓库
+### 1. 下载 Release 资产
 
-```powershell
-git clone https://github.com/shanernerak-dev/codex-web-review-relay.git
-cd codex-web-review-relay
-```
+从 `v0.3.0` GitHub Release 下载两个 ZIP 和 `SHA256SUMS.txt`，先校验 checksum 再解压。不要把 GitHub source archive 当作安装包。
 
-### 2. 安装 native host
+### 2. 从 Windows 资产安装 native host
+
+解压 `codex-web-review-relay-native-host-windows-v0.3.0.zip`，在解压目录中运行：
 
 ```powershell
 pwsh -NoProfile -File scripts/install-native-host.ps1 -InstallRoot "$env:LOCALAPPDATA\codex-web-review-relay"
@@ -123,7 +130,7 @@ pwsh -NoProfile -File scripts/install-native-host.ps1 -InstallRoot "$env:LOCALAP
 - 注册到当前用户的 Chrome Native Messaging manifest
 - `CODEX_WEB_REVIEW_RELAY_TOKEN` 用户环境变量
 
-> **重要**：launcher 内嵌了当前 clone 中 `src/cli.ts` 的绝对路径。**安装后不要移动、重命名或删除本仓库 checkout。** 如需迁移，请在新路径重新运行安装器。
+installer 会把 self-contained runtime 复制到 `<InstallRoot>\runtime`，launcher 固定绑定 `<InstallRoot>\runtime\src\cli.ts`。安装完成后可以删除 ZIP 解压目录。
 
 ### 3. 使用 relay-owned exporter
 
@@ -146,19 +153,19 @@ Exporter 由 relay 所有；仓库特定的 stage-gate 治理仍由 producer age
 
 ### 已有仓库迁移
 
-仓库自有 helper 不再属于 native-host 安装合同。重新运行一次安装器即可迁移到 relay-owned exporter：
+旧的仓库自有 helper 不再属于 native-host 安装合同。重新运行一次安装器即可迁移到 relay-owned exporter：
 
 ```powershell
 .\scripts\install-native-host.ps1 -InstallRoot <relay-install-root>
 ```
 
-已有的 `relay.config.json` 不会被自动改写；将重装视为迁移时机。
+现有安装不会自行迁移。重新运行 v0.3.0 installer 会重建安装配置、安装 relay-owned exporter 并旋转 Bearer token。完整步骤见 native-host 资产中的 `MIGRATION.md`。
 
 ### 4. 加载扩展
 
 1. 打开 `chrome://extensions`
 2. 启用**开发者模式**
-3. 点击**加载已解压的扩展程序**，选择本仓库的 `extension/` 目录
+3. 解压 `codex-web-review-relay-extension-v0.3.0.zip`，点击**加载已解压的扩展程序**选择解压目录；该目录根部必须直接包含 `manifest.json`
 
 扩展 ID 固定为：`kkdijpckhlminpolkllmmkldlljakfem`。
 
@@ -230,7 +237,7 @@ Review scope: <评审者应关注的内容>
 <你的内容>
 ```
 
-提交 handoff 文件（helper 会验证文件已 tracked 且与 HEAD 一致），然后从你的编码 Agent 调用：
+提交 handoff 文件（relay-owned exporter 会验证文件已 tracked 且与 HEAD 一致），然后从你的编码 Agent 调用：
 
 ```
 request_review(handoff_file="C:\\path\\to\\repo\\.agent\\review_handoffs\\pr-1\\main\\round-01-review-request.md")
@@ -301,7 +308,7 @@ else:
 
 Relay 内置一个**relay-owned exporter**，从 handoff 文件生成 `relay-export` JSON。Producer 仓库只需生成规范的 tracked handoff，不需要复制 helper 或注册仓库。
 
-### Helper 必须做什么
+### relay-owned exporter 负责什么
 
 给定一个 `handoff_path`（仓库相对 POSIX 路径），向 stdout 输出 JSON 对象：
 
@@ -324,15 +331,15 @@ Relay 内置一个**relay-owned exporter**，从 handoff 文件生成 `relay-exp
 }
 ```
 
-### 最小 helper 实现
+### relay-owned exporter 合同
 
-Native host 以如下形式调用 helper：
+Native host 以如下形式调用 relay-owned exporter：
 
 ```
 python <config-directory>/relay_export_helper.py relay-export <handoff_path>
 ```
 
-Helper 成功时必须向 stdout 输出恰好一个 JSON 对象；失败时以非零退出码退出，并将稳定错误信息写入 stderr。
+Relay-owned exporter 成功时必须向 stdout 输出恰好一个 JSON 对象；失败时以非零退出码退出，并将稳定错误信息写入 stderr。
 
 Relay-owned exporter 位于 `scripts/tools/relay_export_helper.py`。最小合同：
 
@@ -362,7 +369,7 @@ Review scope: <评审者应关注的内容>
 <你的内容>
 ```
 
-**Native host** 不解析 handoff 正文——它只消费 helper 产出的 relay-export JSON。**Helper** 负责解析和验证 handoff header fields。PR mode 保留六个动态字段和 PR-comment instruction；commit-only mode 额外携带 `Target kind` / `Target ID`，并要求将完整正式结论返回到 `assistant_output`，不要求 PR comment。
+**Native host** 不解析 handoff 正文——它只消费 relay-owned exporter 产出的 relay-export JSON。Exporter 负责解析和验证 handoff header fields。PR mode 保留六个动态字段和 PR-comment instruction；commit-only mode 额外携带 `Target kind` / `Target ID`，并要求将完整正式结论返回到 `assistant_output`，不要求 PR comment。
 
 commit-only mode 的 handoff 格式：
 
